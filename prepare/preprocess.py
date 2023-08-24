@@ -3,7 +3,7 @@ import random
 if __name__ == "__main__":
 
     alls = []
-    fo = open("./filelists/vits_file.txt", "r+")
+    fo = open("./filelists/libri_train_clu_sid.txt", "r+")
     while True:
         try:
             message = fo.readline().strip()
@@ -17,8 +17,9 @@ if __name__ == "__main__":
         alls.append(message)
     fo.close()
 
-    valids = alls[:200]
-    trains = alls[200:]
+    valids = alls[:150]
+    tests = alls[150:300]
+    trains = alls[300:]
 
     random.shuffle(trains)
 
@@ -27,7 +28,12 @@ if __name__ == "__main__":
         print(strs, file=fw)
     fw.close()
 
+    fw = open("./filelists/singing_test.txt", "w", encoding="utf-8")
+    for strs in tests:
+        print(strs, file=fw)
+
     fw = open("./filelists/singing_train.txt", "w", encoding="utf-8")
     for strs in trains:
         print(strs, file=fw)
+
     fw.close()

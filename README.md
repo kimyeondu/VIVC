@@ -1,55 +1,78 @@
-<div align="center">
-<h1> Variational Inference with adversarial learning for end-to-end Singing Voice Synthesis </h1>
+# Init
+Unofficial Implement of VISinger
 
-Different from VISinger, It is just VITS without MAS and DurationPredictor. 
-
-迭代升级中~~~
-
-基于nsf-bigvgan声码器和diffusion基音预测器
-</div>
-
-# 训练步骤
-- 1 设置路径
-> export PYTHONPATH=.
-
-- 2 数据处理
-> python prepare/data_vits.py
-
-      生成文件../VISinger_data/label_vits/XXX._label.npy|XXX_score.npy|XXX_pitch.npy|XXX_slurs.npy
-
-      生成文件filelists/vits_file.txt; 内容格式：wave path|label path|score path|pitch path|slurs path;
-
-- 3 训练索引
-> python prepare/preprocess.py
-
-- 4 启动训练
-> python train.py -c configs/singing_base.json -m singing_base
-
-# 推理验证
-
-- 1 训练集生成验证:F0根据音频提取
-
-> python vsinging_debug.py
-
-- 2 推理验证:F0根据规则生成
-
-> python vsinging_infer.py
-
-- 3 完整歌曲合成（[使用release模型](https://github.com/PlayVoice/VI-SVS/releases/tag/0.0.1)）
-
-> pyton vsinging_song.py
-
-- 4 F0的问题可以额外训练F0预测器,或者使用UTAU绘制pit曲线
-
-![LOSS值](/resource/vising_loss.png)
-![MEL谱](/resource/vising_mel.png)
-
-# 样例音频
-
-[vits_singing_样例.wav](/resource/vising_sample.wav)
-
-# 参考项目
+# Reference Repos
 https://github.com/jaywalnut310/vits
+
+https://github.com/MoonInTheRiver/DiffSinger
 
 https://wenet.org.cn/opencpop/
 
+https://github.com/PlayVoice/VI-SVS
+
+# Data Preprocess
+```bash
+export PYTHONPATH=.
+```
+
+Generate ../VISinger_data/label_vits_phn/XXX._label.npy|XXX._label_dur.npy|XXX_score.npy|XXX_score_dur.npy|XXX_pitch.npy|XXX_slurs.npy
+
+```bash
+python prepare/data_vits_phn.py
+```
+
+Generate filelists/vits_file.txt
+Format: wave path|label path|label duration path|score path|score duration path|pitch path|slurs path;
+
+```bash
+python prepare/preprocess.py
+```
+
+# VISinger training
+
+```bash
+python train.py -c configs/singing_base.json -m singing_base
+```
+
+or
+
+```bash
+./train.sh
+```
+
+# Inference
+
+```bash
+./evaluate_score.sh
+```
+
+![LOSS](/resource/vising_loss.png)
+![MEL](/resource/vising_mel.png)
+
+# Samples
+
+<audio id="audio" controls="" preload="none">
+      <source id="wav" src="/resource/2005000151.wav">
+</audio>
+
+<audio id="audio" controls="" preload="none">
+      <source id="wav" src="/resource/2005000152.wav">
+</audio>
+
+<audio id="audio" controls="" preload="none">
+      <source id="wav" src="/resource/2005000186.wav">
+</audio>
+
+<audio id="audio" controls="" preload="none">
+      <source id="wav" src="/resource/2005000187.wav">
+</audio>
+
+<audio id="audio" controls="" preload="none">
+      <source id="wav" src="/resource/2005000268.wav">
+</audio>
+
+
+
+
+
+1970/26100/1970_26100_000020_000004_dur_slow|they slanted down but not sidewise.|dh ey1 s l ae1 n t ih0 d d aw1 n b ah1 t n aa1 t s ay1 d w ay2 z sil|4 2 2 2 7 1 1 7 10 10 2 6 6 10 10 10 2 2 7 2 2 10 6 3 4|0.0 204.58 201.54 217.82 234.53 276.8 274.92 239.96 178.98 192.45 224.23 167.7 156.29 180.57 180.74 187.07 209.19 219.46 230.72 216.0 225.33 190.62 163.58 74.98 0.0|0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5|0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5|0 11 9 6 9 6 0 0 11 6 8 1 3 1 1 6 9 11 0 9 6 0 4 9 0|0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0|0
