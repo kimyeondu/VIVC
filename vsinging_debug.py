@@ -21,6 +21,7 @@ hps = utils.get_hparams_from_file("./configs/singing_base.json")
 net_g = SynthesizerTrn(
     hps.data.filter_length // 2 + 1,
     hps.train.segment_size // hps.data.hop_length,
+            s = model.style_encoder(gt.unsqueeze(1))
     **hps.model,
 ).cuda()
 

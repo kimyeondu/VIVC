@@ -32,7 +32,7 @@
     "n_mel_channels": 80,
     "mel_fmin": 0.0,
     "mel_fmax": 8000,
-    "n_speakers": 123
+    "n_speakers": 0
   },
   "model": {
     "inter_channels": 192,
@@ -42,8 +42,8 @@
     "n_layers": 6,
     "kernel_size": 3,
     "p_dropout": 0.1,
-    "gin_channels": 256,
-    "n_speakers":123,
+    
+    "n_speakers":0,
     "resblock": "1",
     "resblock_kernel_sizes": [
       3,
@@ -80,6 +80,7 @@
       4,
       4
     ],
-    "use_spectral_norm": false
+    "use_spectral_norm": false,
+    "gin_channels": 256
   }
 }
