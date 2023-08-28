@@ -39,13 +39,13 @@ net_g = Synthesizer(
 if use_cuda:
     net_g = net_g.cuda()
 
-_ = utils.load_checkpoint("./logs/eid/G_70000.pth", net_g, None)
+_ = utils.load_checkpoint("./logs/dann2/G_76000.pth", net_g, None)
 net_g.eval()
 # net_g.remove_weight_norm()
 
 singInput = SingInput(hps.data.sampling_rate, hps.data.hop_length)
 featureInput = FeatureInput(
-    "../VISinger_data_bk/wav_dump_16k/", hps.data.sampling_rate, hps.data.hop_length
+    "/home/work/PJT/VISinger/VISinger_data_bk/wav_dump_24k/", hps.data.sampling_rate, hps.data.hop_length
 )
 
 # check directory existence
@@ -143,7 +143,7 @@ while True:
     print("Wave Time (Seconds):", data_len)
     print("Real time Rate (%):", run_time / data_len)
     filename = file.split('/')[-1]
-    save_wav(audio, f"./singing_out/{filename}_G70000.wav", hps.data.sampling_rate)
+    save_wav(audio, f"./singing_out/{filename}_dann_G76000.wav", hps.data.sampling_rate)
 fo.close()
 # can be deleted
 os.system("chmod 777 ./singing_out -R")

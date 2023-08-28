@@ -1,5 +1,5 @@
 {
-  "model_dir" : "./logs/energy",
+  "model_dir" : "./logs/classifier",
   "train": {
     "log_interval": 200,
     "eval_interval": 2000,

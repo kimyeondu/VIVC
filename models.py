@@ -193,6 +193,8 @@ class TextEncoder(nn.Module):
         # print("score_dur ::", score_dur.shape)
         # print("slurs :: ", slurs.shape)
         # print("lengths :: ", lengths.shape)
+        score_embedding = self.emb_score(score)
+        energy_embedding = self.emb_energy(energy)
 
         x = x + self.emb_score(score)
         x = x + self.emb_score_dur(score_dur)
@@ -600,7 +602,7 @@ class LengthRegulator(torch.nn.Module):
         self.pad_value = pad_value
         self.winlen = 1024
         self.hoplen = 256
-        self.sr = 16000
+        self.sr = 24000
 
     def pad_list(self, xs, pad_value):
         """Perform padding for the list of tensors.
@@ -816,7 +818,7 @@ class EnergyFramePriorNet(nn.Module):
         x = x.transpose(1, 2)
         return x
 
-class FeatureClassifier(nn.Module):
+class Pitch_EnergyClassifier(nn.Module):
     def __init__(
         self,
         n_vocab,
@@ -827,6 +829,7 @@ class FeatureClassifier(nn.Module):
         n_layers,
         kernel_size,
         p_dropout,
+        energy_class=21
     ):
         super().__init__()
 
@@ -838,25 +841,73 @@ class FeatureClassifier(nn.Module):
         self.n_layers = n_layers
         self.kernel_size = kernel_size
         self.p_dropout = p_dropout
-        # self.classifier = nn.Sequential(
-        #     nn.Linear(self.n_vocab, self.hidden_channels),
-        #     nn.Linear(self.hidden_channels, self.n_vocab),
-        #     )            
-        # self.avg_pool = nn.AdaptiveAvgPool1d(1)  # Global Average Pooling
-        # self.proj = nn.Conv1d(hidden_channels, 1, 1)
-        # self.classifier = nn.ModuleList()
-        self.model1 = nn.Conv1d(self.hidden_channels, self.kernel_size, 1)
+        self.energy_class = energy_class
+
+        self.classifier = nn.Sequential(
+            nn.Linear(self.hidden_channels, self.hidden_channels//2),
+            nn.Linear(self.hidden_channels//2, self.hidden_channels),
+            )            
+        self.avg_pool = nn.AdaptiveAvgPool1d(1)  # Global Average Pooling
+        # self.proj = nn.Conv1d(self.hidden_channels, 1, 1)
 
     def forward(self, feature_embedding):
         # (40, 192, 296)
-        print(x.shape)
-        x = feature_embedding.transpose(1, 2)
-        # x = self.avg_pool(x).squeeze(-1)
-        x = self.model1(x)
-    
+        x = feature_embedding.transpose(1, 2) # (b, 296, mel)
+        x = self.classifier(x) # (b, 296, class)
+        
+        # # (1)
+        # x = self.proj(x)
+        # x = x.squeeze()
+
+        # (2)
+        x = self.avg_pool(x).squeeze(-1) # (b, 296)
+
         return x
 
+class Energy_PitchClassifier(nn.Module):
+    def __init__(
+        self,
+        n_vocab,
+        out_channels,
+        hidden_channels,
+        filter_channels,
+        n_heads,
+        n_layers,
+        kernel_size,
+        p_dropout,
+        pitch_class=12
+    ):
+        super().__init__()
 
+        self.n_vocab = n_vocab
+        self.out_channels = out_channels
+        self.hidden_channels = hidden_channels
+        self.filter_channels = filter_channels
+        self.n_heads = n_heads
+        self.n_layers = n_layers
+        self.kernel_size = kernel_size
+        self.p_dropout = p_dropout
+        self.pitch_class = pitch_class
+
+        self.classifier = nn.Sequential(
+            nn.Linear(self.hidden_channels, self.hidden_channels//2),
+            nn.Linear(self.hidden_channels//2, self.hidden_channels),
+            )            
+        self.avg_pool = nn.AdaptiveAvgPool1d(1)  # Global Average Pooling
+        # self.proj = nn.Conv1d(self.hidden_channels, 1, 1)
+
+    def forward(self, feature_embedding):
+        # (40, 192, 296)
+        x = feature_embedding.transpose(1, 2) # (b, 296, mel)
+        x = self.classifier(x) # (b, 296, class)
+        # # (1)
+        # x = self.proj(x)
+        # x = x.squeeze()
+        
+        # (2)
+        x = self.avg_pool(x).squeeze(-1) # (b, 296)
+
+        return x
 
 # class SpeakerEncoder(nn.Module):
 #     def __init__(self, dim_in=48, style_dim=48, max_conv_dim=384):
@@ -1008,7 +1059,7 @@ class SynthesizerTrn(nn.Module):
             kernel_size,
             p_dropout,
         )
-        self.pitch_classifier = FeatureClassifier(
+        self.pitch_energyclassifier = Pitch_EnergyClassifier(
             n_vocab,
             inter_channels,
             hidden_channels,
@@ -1039,7 +1090,7 @@ class SynthesizerTrn(nn.Module):
             p_dropout,
         )
 
-        self.energy_classifier = FeatureClassifier(
+        self.energy_pitchclassifier = Energy_PitchClassifier(
             n_vocab,
             inter_channels,
             hidden_channels,
@@ -1106,8 +1157,9 @@ class SynthesizerTrn(nn.Module):
             commons.sequence_mask(x_lengths, x_frame.size(2)), 1
         ).to(
             x.dtype
-        )  # 更新x_mask矩阵
+        )  # x_mask 업데이트
         x_mask = x_mask.to(x.device)
+        # position
         max_len = x_frame.size(2)
         d_model = x_frame.size(1)
         batch_size = x_frame.size(0)
@@ -1119,7 +1171,7 @@ class SynthesizerTrn(nn.Module):
         pe[:, :, 0::2] = torch.sin(position * div_term)
         pe[:, :, 1::2] = torch.cos(position * div_term)
         pe = pe.transpose(1, 2).to(x_frame.device)
-        x_frame = x_frame + pe # (192, 290)
+        x_frame = x_frame + pe # (mel, 290)
         
         # pitch predictor (+dann)
         pred_pitch, pitch_embedding = self.pitch_net(x_frame, x_mask) # ( 40, 1, 296) (40, 192, 296)
@@ -1127,10 +1179,10 @@ class SynthesizerTrn(nn.Module):
         gt_lf0 = pitch.to(torch.float32) 
         pred_lf0 = lf0.squeeze() # (40, 296)
 
-        # f0_noteg = self.pitch_classifier(pitch_embedding)
-        # logit_f0_noteg = revgrad(f0_noteg, self.alpha)
-        logit_f0_noteg = revgrad(pred_lf0, self.alpha) # (40, 192, 296)
+        f0_reverse = revgrad(pitch_embedding, self.alpha)
+        logit_f0_noteg = self.pitch_energyclassifier(f0_reverse)
 
+        
         x_pitch_frame = self.pitch_frame_prior_net(x_frame, pitch_embedding, x_mask) # (296, 192)
         x_pitch_frame = x_pitch_frame.transpose(1, 2) # (192, 290)
 
@@ -1140,10 +1192,8 @@ class SynthesizerTrn(nn.Module):
         gt_leg = energy_real.to(torch.float32)
         pred_leg = leg.squeeze()
         
-
-        # eg_notf0 = self.energy_classifier(energy_embedding)
-        # logit_eg_notf0 = revgrad(eg_notf0, self.alpha)           
-        logit_eg_notf0 = revgrad(pred_leg, self.alpha)
+        eg_reverse = revgrad(energy_embedding, self.alpha)
+        logit_eg_notf0 = self.energy_pitchclassifier(energy_embedding)
 
         x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
         x_energy_frame = x_energy_frame.transpose(1, 2)
@@ -1251,7 +1301,8 @@ class SynthesizerTrn(nn.Module):
         gt_lf0 = pitch.to(torch.float32) # (40, 296)
         pred_lf0 = lf0.squeeze() # (40, 296)
 
-        logit_f0_noteg = revgrad(pred_lf0, self.alpha) # (40, 192, 296)
+        f0_reverse = revgrad(pitch_embedding, self.alpha)
+        logit_f0_noteg = self.pitch_energyclassifier(f0_reverse)
 
         x_frame = self.pitch_frame_prior_net(x_frame, pitch_embedding, x_mask)
         x_frame = x_frame.transpose(1, 2)
@@ -1262,7 +1313,8 @@ class SynthesizerTrn(nn.Module):
         gt_leg = energy_real.to(torch.float32)
         pred_leg = leg.squeeze()
 
-        logit_eg_notf0 = revgrad(pred_leg, self.alpha)
+        energy_reverse = revgrad(energy_embedding, self.alpha)
+        logit_eg_notf0 = self.energy_pitchclassifier(energy_reverse)
 
 
         x_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)

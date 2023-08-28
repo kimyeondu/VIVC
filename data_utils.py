@@ -299,7 +299,7 @@ class TextAudioCollate:
             # try:
             score = row[2]
             # score_padded[i, : score.size(0)] = score
-            score_padded[i, : score.size(0)] = torch.tensor(score)
+            score_padded[i, : score.size(0)] = score
 
             score_dur = row[3]
             score_dur_padded[i, : score_dur.size(0)] = score_dur
@@ -310,7 +310,7 @@ class TextAudioCollate:
             # try:
             energy = row[5]
             # score_padded[i, : score.size(0)] = score
-            energy_padded[i, : energy.size(0)] = torch.tensor(energy)
+            energy_padded[i, : energy.size(0)] = energy
 
             energy_real = row[6]
             # score_padded[i, : score.size(0)] = score
