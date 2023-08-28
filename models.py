@@ -898,14 +898,14 @@ class Energy_PitchClassifier(nn.Module):
 
     def forward(self, feature_embedding):
         # (40, 192, 296)
-        x = feature_embedding.transpose(1, 2) # (b, 296, mel)
-        x = self.classifier(x) # (b, 296, class)
+        x = feature_embedding.transpose(1, 2) # (b, mel, hidden=192)
+        x = self.classifier(x) # (b, mel, hidden)
         # # (1)
         # x = self.proj(x)
         # x = x.squeeze()
         
         # (2)
-        x = self.avg_pool(x).squeeze(-1) # (b, 296)
+        x = self.avg_pool(x).squeeze(-1) # (b, mel)
 
         return x
 
@@ -1193,7 +1193,11 @@ class SynthesizerTrn(nn.Module):
         pred_leg = leg.squeeze()
         
         eg_reverse = revgrad(energy_embedding, self.alpha)
-        logit_eg_notf0 = self.energy_pitchclassifier(energy_embedding)
+        logit_eg_notf0 = self.energy_pitchclassifier(eg_reverse)
+
+        # print('#######################################################################')
+        # print(logit_f0_noteg.shape, gt_leg.shape)
+        # print(logit_eg_notf0.shape, gt_lf0.shape)
 
         x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
         x_energy_frame = x_energy_frame.transpose(1, 2)
