@@ -1181,7 +1181,6 @@ class SynthesizerTrn(nn.Module):
 
         f0_reverse = revgrad(pitch_embedding, self.alpha)
         logit_f0_noteg = self.pitch_energyclassifier(f0_reverse)
-
         
         x_pitch_frame = self.pitch_frame_prior_net(x_frame, pitch_embedding, x_mask) # (296, 192)
         x_pitch_frame = x_pitch_frame.transpose(1, 2) # (192, 290)
