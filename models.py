@@ -1310,8 +1310,8 @@ class SynthesizerTrn(nn.Module):
         f0_reverse = revgrad(pitch_embedding, self.alpha)
         logit_f0_noteg = self.pitch_energyclassifier(f0_reverse)
 
-        x_frame = self.pitch_frame_prior_net(x_frame, pitch_embedding, x_mask)
-        x_frame = x_frame.transpose(1, 2)
+        x_pitch_frame = self.pitch_frame_prior_net(x_frame, pitch_embedding, x_mask)
+        x_pitch_frame = x_pitch_frame.transpose(1, 2)
 
         # energy
         pred_energy, energy_embedding = self.energy_net(x_frame, x_mask)
@@ -1322,9 +1322,10 @@ class SynthesizerTrn(nn.Module):
         energy_reverse = revgrad(energy_embedding, self.alpha)
         logit_eg_notf0 = self.energy_pitchclassifier(energy_reverse)
 
+        x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
+        x_energy_frame = x_energy_frame.transpose(1, 2)
 
-        x_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
-        x_frame = x_frame.transpose(1, 2)
+        x_frame = x_frame + x_pitch_frame + x_energy_frame
 
         m_p, logs_p = self.project(x_frame, x_mask)
 
@@ -1540,13 +1541,16 @@ class Synthesizer(nn.Module):
         x_frame = x_frame + pe
         pred_pitch, pitch_embedding = self.pitch_net(x_frame, x_mask)
 
-        x_frame = self.pitch_frame_prior_net(x_frame, pitch_embedding, x_mask)
-        x_frame = x_frame.transpose(1, 2)
+        x_pitch_frame = self.pitch_frame_prior_net(x_frame, pitch_embedding, x_mask)
+        x_pitch_frame = x_pitch_frame.transpose(1, 2)
 
         pred_energy, energy_embedding = self.energy_net(x_frame, x_mask)
 
-        x_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
-        x_frame = x_frame.transpose(1, 2)
+        x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
+        x_energy_frame = x_energy_frame.transpose(1, 2)
+
+        x_frame = x_frame + x_pitch_frame + x_energy_frame
+
         m_p, logs_p = self.project(x_frame, x_mask)
 
         z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * 0.3

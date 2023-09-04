@@ -144,7 +144,7 @@ while True:
     print("Wave Time (Seconds):", data_len)
     print("Real time Rate (%):", run_time / data_len)
     filename = file.split('/')[-1]
-    save_wav(audio, f"./singing_out/{filename}_dann3_G220000.wav", hps.data.sampling_rate)
+    save_wav(audio, f"./singing_out/infer_{filename}_dann3_G220000.wav", hps.data.sampling_rate)
 fo.close()
 # can be deleted
 os.system("chmod 777 ./singing_out -R")
