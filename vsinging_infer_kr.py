@@ -25,7 +25,8 @@ def save_wav(wav, path, rate):
 use_cuda = True
 
 # define model and load checkpoint
-hps = utils.get_hparams_from_file("./configs/singing_base.json")
+# hps = utils.get_hparams_from_file("./configs/singing_base.json")
+hps = utils.get_hparams_from_file("./logs/dann3/config.json")
 
 vocab_size = get_vocab_size()
 
@@ -39,7 +40,7 @@ net_g = Synthesizer(
 if use_cuda:
     net_g = net_g.cuda()
 
-_ = utils.load_checkpoint("./logs/dann2/G_76000.pth", net_g, None)
+_ = utils.load_checkpoint("./logs/dann3/G_220000.pth", net_g, None)
 net_g.eval()
 # net_g.remove_weight_norm()
 
@@ -143,7 +144,7 @@ while True:
     print("Wave Time (Seconds):", data_len)
     print("Real time Rate (%):", run_time / data_len)
     filename = file.split('/')[-1]
-    save_wav(audio, f"./singing_out/{filename}_dann_G76000.wav", hps.data.sampling_rate)
+    save_wav(audio, f"./singing_out/{filename}_dann3_G220000.wav", hps.data.sampling_rate)
 fo.close()
 # can be deleted
 os.system("chmod 777 ./singing_out -R")
