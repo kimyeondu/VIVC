@@ -1,9 +1,6 @@
 *.pth
 *.pyc
-filelists/singing_train.txt
-filelists/singing_valid.txt
-filelists/libri*
-filelists/vits_file.txt
+./filelists/*
 *.txt
 *.ipynb
 logs
