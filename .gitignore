@@ -13,7 +13,7 @@ singing_out
 nohup.out
 env/
 __pycache__/
-singing_out/
+singing_out*/
 VIsinger_data*
 venv/
 core
