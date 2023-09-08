@@ -376,8 +376,7 @@ class Generator(torch.nn.Module):
 
         for i in range(self.num_upsamples):
             x = F.leaky_relu(x, modules.LRELU_SLOPE)
-            x = self.ups[i](x)
-            xs = None
+             xs = None
             for j in range(self.num_kernels):
                 if xs is None:
                     xs = self.resblocks[i * self.num_kernels + j](x)
@@ -909,35 +908,76 @@ class Energy_PitchClassifier(nn.Module):
 
         return x
 
-class SpeakerEncoder(nn.Module):
-    '''
-    styletts-vc
-    '''
-    def __init__(self, dim_in=48, style_dim=48, max_conv_dim=384):
-        super().__init__()
-        blocks = []
-        blocks += [spectral_norm(nn.Conv2d(1, dim_in, 3, 1, 1))]
+# class SpeakerEncoder(nn.Module):
+#     '''
+#     styletts-vc
+#     '''
+#     def __init__(self, dim_in=48, style_dim=48, max_conv_dim=384):
+#         super().__init__()
+#         blocks = []
+#         blocks += [spectral_norm(nn.Conv2d(1, dim_in, 3, 1, 1))]
 
-        repeat_num = 4
-        for _ in range(repeat_num):
-            dim_out = min(dim_in*2, max_conv_dim)
-            blocks += [ResBlk(dim_in, dim_out, downsample='half')]
-            dim_in = dim_out
+#         repeat_num = 4
+#         for _ in range(repeat_num):
+#             dim_out = min(dim_in*2, max_conv_dim)
+#             blocks += [ResBlk(dim_in, dim_out, downsample='half')]
+#             dim_in = dim_out
 
-        blocks += [nn.LeakyReLU(0.2)]
-        blocks += [spectral_norm(nn.Conv2d(dim_out, dim_out, 5, 1, 0))]
-        blocks += [nn.AdaptiveAvgPool2d(1)]
-        blocks += [nn.LeakyReLU(0.2)]
-        self.shared = nn.Sequential(*blocks)
+#         blocks += [nn.LeakyReLU(0.2)]
+#         blocks += [spectral_norm(nn.Conv2d(dim_out, dim_out, 5, 1, 0))]
+#         blocks += [nn.AdaptiveAvgPool2d(1)]
+#         blocks += [nn.LeakyReLU(0.2)]
+#         self.shared = nn.Sequential(*blocks)
 
-        self.unshared = nn.Linear(dim_out, style_dim)
+#         self.unshared = nn.Linear(dim_out, style_dim)
 
-    def forward(self, x):
-        h = self.shared(x)
-        h = h.view(h.size(0), -1)
-        s = self.unshared(h)
+#     def forward(self, x):
+#         h = self.shared(x)
+#         h = h.view(h.size(0), -1)
+#         s = self.unshared(h)
     
-        return s
+#         return s
+
+class SpeakerEncoder(torch.nn.Module):
+    def __init__(self, mel_n_channels=80, model_num_layers=3, model_hidden_size=256, model_embedding_size=256):
+        super(SpeakerEncoder, self).__init__()
+        self.lstm = nn.LSTM(mel_n_channels, model_hidden_size, model_num_layers, batch_first=True)
+        self.linear = nn.Linear(model_hidden_size, model_embedding_size)
+        self.relu = nn.ReLU()
+
+    def forward(self, mels):
+        self.lstm.flatten_parameters()
+        _, (hidden, _) = self.lstm(mels)
+        embeds_raw = self.relu(self.linear(hidden[-1]))
+        return embeds_raw / torch.norm(embeds_raw, dim=1, keepdim=True)
+        
+    def compute_partial_slices(self, total_frames, partial_frames, partial_hop):
+        mel_slices = []
+        for i in range(0, total_frames-partial_frames, partial_hop):
+            mel_range = torch.arange(i, i+partial_frames)
+            mel_slices.append(mel_range)
+            
+        return mel_slices
+    
+    def embed_utterance(self, mel, partial_frames=128, partial_hop=64):
+        mel_len = mel.size(1)
+        last_mel = mel[:,-partial_frames:]
+        
+        if mel_len > partial_frames:
+            mel_slices = self.compute_partial_slices(mel_len, partial_frames, partial_hop)
+            mels = list(mel[:,s] for s in mel_slices)
+            mels.append(last_mel)
+            mels = torch.stack(tuple(mels), 0).squeeze(1)
+        
+            with torch.no_grad():
+                partial_embeds = self(mels)
+            embed = torch.mean(partial_embeds, axis=0).unsqueeze(0)
+            #embed = embed / torch.linalg.norm(embed, 2)
+        else:
+            with torch.no_grad():
+                embed = self(last_mel)
+        
+        return embed
 
 class GradientReversalLayer(torch.autograd.Function):
     @staticmethod
@@ -980,6 +1020,7 @@ class SynthesizerTrn(nn.Module):
         n_speakers=0,
         gin_channels=0,
         use_sdp=True,
+        use_vc=True,
         **kwargs
     ):
 
@@ -1000,6 +1041,7 @@ class SynthesizerTrn(nn.Module):
         self.upsample_kernel_sizes = upsample_kernel_sizes
         self.segment_size = segment_size
         self.n_speakers = n_speakers
+        self.use_vc = use_vc
         self.gin_channels = gin_channels
 
         self.use_sdp = use_sdp
@@ -1113,6 +1155,7 @@ class SynthesizerTrn(nn.Module):
             n_layers,
             kernel_size,
             p_dropout,
+            # use_vc,
         )
         self.ctc_loss = nn.CTCLoss(n_vocab - 1, reduction="mean")
         # self.speaker_encoder = SpeakerEncoder(
@@ -1121,10 +1164,10 @@ class SynthesizerTrn(nn.Module):
         #      max_conv_dim=args.hidden_dim)
         self.alpha = torch.tensor([1.0]).cuda(0)
 
-
-
         if n_speakers > 1:
             self.emb_g = nn.Embedding(n_speakers, gin_channels)
+        if use_vc:
+            self.enc_spk = SpeakerEncoder(model_hidden_size=gin_channels, model_embedding_size=gin_channels)
 
     def forward(
         self,
@@ -1147,6 +1190,8 @@ class SynthesizerTrn(nn.Module):
             g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
         else:
             g = None
+        if self.use_vc:
+            g = self.enc_spk(y.transpose(1,2)).unsqueeze(-1)
 
         # duration
         w = phone_dur.unsqueeze(1)
@@ -1198,9 +1243,6 @@ class SynthesizerTrn(nn.Module):
         logit_eg_notf0 = self.energy_pitchclassifier(eg_reverse)
 
         # print('#######################################################################')
-        # print(logit_f0_noteg.shape, gt_leg.shape)
-        # print(logit_eg_notf0.shape, gt_lf0.shape)
-
         x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
         x_energy_frame = x_energy_frame.transpose(1, 2)
 
@@ -1212,11 +1254,6 @@ class SynthesizerTrn(nn.Module):
         z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g)
 
         log_probs = self.phonemes_predictor(z, y_mask)
-
-        # print("log_probs", log_probs.shape)
-        # print("phone", phone.shape)
-        # print("y_lengths", y_lengths)
-        # print("phone_lengths", phone_lengths)
         ctc_loss = self.ctc_loss(log_probs, phone, y_lengths, phone_lengths)
 
         # z:(,)

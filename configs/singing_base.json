@@ -1,5 +1,5 @@
 {
-  "model_dir" : "./logs/classifier",
+  "model_dir" : "./logs/multispeaker",
   "train": {
     "log_interval": 200,
     "eval_interval": 2000,
@@ -31,8 +31,7 @@
     "win_length": 1024,
     "n_mel_channels": 80,
     "mel_fmin": 0.0,
-    "mel_fmax": 8000,
-    "n_speakers": 0
+    "mel_fmax": 8000
   },
   "model": {
     "inter_channels": 192,
@@ -42,8 +41,7 @@
     "n_layers": 6,
     "kernel_size": 3,
     "p_dropout": 0.1,
-    
-    "n_speakers":0,
+    "use_vc":true,
     "resblock": "1",
     "resblock_kernel_sizes": [
       3,
@@ -80,7 +78,6 @@
       4,
       4
     ],
-    "use_spectral_norm": false,
-    "gin_channels": 256
+    "use_spectral_norm": false
   }
 }
