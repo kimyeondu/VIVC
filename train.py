@@ -243,10 +243,10 @@ def train_and_evaluate(
                 pred_logw,
                 gt_lf0,
                 pred_lf0,
-                logit_f0_noteg,
-                gt_leg,
-                pred_leg,
-                logit_eg_notf0,
+                # logit_f0_noteg,
+                # gt_leg,
+                # pred_leg,
+                # logit_eg_notf0,
                 ctc_loss,
             ) = net_g(
                 phone,
@@ -318,10 +318,13 @@ def train_and_evaluate(
 
                 loss_dur = mse_loss(gt_logw, pred_logw)
                 loss_pitch = mse_loss(gt_lf0, pred_lf0)
-                loss_pitch_noteg = mse_loss(gt_leg, logit_f0_noteg)
-
-                loss_energy = mse_loss(gt_leg, pred_leg)
-                loss_energy_notf0 = mse_loss(gt_lf0, logit_eg_notf0)
+                # loss_pitch_noteg = mse_loss(gt_leg, logit_f0_noteg)
+                # loss_energy = mse_loss(gt_leg, pred_leg)
+                # loss_energy_notf0 = mse_loss(gt_lf0, logit_eg_notf0)
+                
+                loss_pitch_noteg = 0
+                loss_energy = 0
+                loss_energy_notf0 = 0
                 
                 loss_gen_all = (
                     loss_gen
@@ -540,10 +543,10 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
                 pred_logw,
                 gt_lf0,
                 pred_lf0,
-                logit_f0_noteg,
-                gt_leg,
-                pred_leg,
-                logit_eg_notf0,
+                # logit_f0_noteg,
+                # gt_leg,
+                # pred_leg,
+                # logit_eg_notf0,
                 ctc_loss,
             ) = generator.module.infer(
                 phone,
@@ -609,10 +612,13 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
 
                     loss_dur = mse_loss(gt_logw, pred_logw)
                     loss_pitch = mse_loss(gt_lf0, pred_lf0)
-                    loss_pitch_noteg = mse_loss(gt_leg, logit_f0_noteg)
+                    # loss_pitch_noteg = mse_loss(gt_leg, logit_f0_noteg)
+                    # loss_energy = mse_loss(gt_leg, pred_leg)
+                    # loss_energy_notf0 = mse_loss(gt_lf0, logit_eg_notf0)
 
-                    loss_energy = mse_loss(gt_leg, pred_leg)
-                    loss_energy_notf0 = mse_loss(gt_lf0, logit_eg_notf0)
+                    loss_pitch_noteg = 0
+                    loss_energy = 0
+                    loss_energy_notf0 = 0
 
                     loss_gen_all = (
                         loss_gen

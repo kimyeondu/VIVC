@@ -376,7 +376,7 @@ class Generator(torch.nn.Module):
 
         for i in range(self.num_upsamples):
             x = F.leaky_relu(x, modules.LRELU_SLOPE)
-             xs = None
+            xs = None
             for j in range(self.num_kernels):
                 if xs is None:
                     xs = self.resblocks[i * self.num_kernels + j](x)
@@ -1020,7 +1020,7 @@ class SynthesizerTrn(nn.Module):
         n_speakers=0,
         gin_channels=0,
         use_sdp=True,
-        use_vc=True,
+        use_vc=False,
         **kwargs
     ):
 
@@ -1166,8 +1166,8 @@ class SynthesizerTrn(nn.Module):
 
         if n_speakers > 1:
             self.emb_g = nn.Embedding(n_speakers, gin_channels)
-        if use_vc:
-            self.enc_spk = SpeakerEncoder(model_hidden_size=gin_channels, model_embedding_size=gin_channels)
+        # if use_vc:
+        #     self.enc_spk = SpeakerEncoder(model_hidden_size=gin_channels, model_embedding_size=gin_channels)
 
     def forward(
         self,
@@ -1190,8 +1190,8 @@ class SynthesizerTrn(nn.Module):
             g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
         else:
             g = None
-        if self.use_vc:
-            g = self.enc_spk(y.transpose(1,2)).unsqueeze(-1)
+        # if self.use_vc:
+        #     g = self.enc_spk(y.transpose(1,2)).unsqueeze(-1)
 
         # duration
         w = phone_dur.unsqueeze(1)
@@ -1227,26 +1227,26 @@ class SynthesizerTrn(nn.Module):
         gt_lf0 = pitch.to(torch.float32) 
         pred_lf0 = lf0.squeeze() # (40, 296)
 
-        f0_reverse = revgrad(pitch_embedding, self.alpha)
-        logit_f0_noteg = self.pitch_energyclassifier(f0_reverse)
+        # f0_reverse = revgrad(pitch_embedding, self.alpha)
+        # logit_f0_noteg = self.pitch_energyclassifier(f0_reverse)
         
         x_pitch_frame = self.pitch_frame_prior_net(x_frame, pitch_embedding, x_mask) # (296, 192)
         x_pitch_frame = x_pitch_frame.transpose(1, 2) # (192, 290)
 
-        # energy predictor (+dann)
-        pred_energy, energy_embedding = self.energy_net(x_frame, x_mask)
-        leg = torch.unsqueeze(pred_energy, -1)
-        gt_leg = energy_real.to(torch.float32)
-        pred_leg = leg.squeeze()
+        # # energy predictor (+dann)
+        # pred_energy, energy_embedding = self.energy_net(x_frame, x_mask)
+        # leg = torch.unsqueeze(pred_energy, -1)
+        # gt_leg = energy_real.to(torch.float32)
+        # pred_leg = leg.squeeze()
         
-        eg_reverse = revgrad(energy_embedding, self.alpha)
-        logit_eg_notf0 = self.energy_pitchclassifier(eg_reverse)
+        # eg_reverse = revgrad(energy_embedding, self.alpha)
+        # logit_eg_notf0 = self.energy_pitchclassifier(eg_reverse)
 
-        # print('#######################################################################')
-        x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
-        x_energy_frame = x_energy_frame.transpose(1, 2)
+        # x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
+        # x_energy_frame = x_energy_frame.transpose(1, 2)
 
-        x_frame = x_frame + x_pitch_frame + x_energy_frame
+
+        x_frame = x_frame + x_pitch_frame #+ x_energy_frame
 
         m_p, logs_p = self.project(x_frame, x_mask)
 
@@ -1258,12 +1258,6 @@ class SynthesizerTrn(nn.Module):
 
         # z:(,)
         z_p = self.flow(z, y_mask, g=g)
-        # speaker style encoder #################
-        # s = self.speaker_encoder(y.unsqueeze(1))
-        # print(z_p).shape
-        #########################################
-        # z_p: ()
-
 
         z_slice, ids_slice = commons.rand_slice_segments(
             z, y_lengths, self.segment_size
@@ -1280,10 +1274,10 @@ class SynthesizerTrn(nn.Module):
             pred_logw,
             gt_lf0,
             pred_lf0,
-            logit_f0_noteg,
-            gt_leg,
-            pred_leg,
-            logit_eg_notf0,
+            # logit_f0_noteg,
+            # gt_leg,
+            # pred_leg,
+            # logit_eg_notf0,
             ctc_loss,
         )
 
@@ -1302,7 +1296,6 @@ class SynthesizerTrn(nn.Module):
         y_lengths,
         sid=None,
     ):
-        # print('################################### eval 1 ###################################')
         # x, x_mask = self.enc_p(phone, score, score_dur, slurs, phone_lengths,  energy)
 
         x, x_mask = self.enc_p(phone, score, score_dur, energy, slurs, phone_lengths)
@@ -1310,7 +1303,6 @@ class SynthesizerTrn(nn.Module):
             g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
         else:
             g = None
-        # print('################################### eval 2 ###################################')
 
         # duration
         w = phone_dur.unsqueeze(1)
@@ -1318,7 +1310,6 @@ class SynthesizerTrn(nn.Module):
         pred_logw = self.dp(x, x_mask, score_dur, g=g)
         # pred_logw_ = (pred_logw * x_mask).type(torch.LongTensor).to(x.device).squeeze(1)
         x_frame, x_lengths = self.lr(x, phone_dur, phone_lengths)
-        # print('################################### eval 3 ###################################')
 
         x_mask = torch.unsqueeze(
             commons.sequence_mask(x_lengths, x_frame.size(2)), 1
@@ -1336,7 +1327,6 @@ class SynthesizerTrn(nn.Module):
         pe[:, :, 1::2] = torch.cos(position * div_term)
         pe = pe.transpose(1, 2).to(x_frame.device)
         x_frame = x_frame + pe
-        # print('################################### eval 4 ###################################')
 
         # pitch
         pred_pitch, pitch_embedding = self.pitch_net(x_frame, x_mask) # ( 40, 1, 296) (40, 192, 296)
@@ -1344,25 +1334,25 @@ class SynthesizerTrn(nn.Module):
         gt_lf0 = pitch.to(torch.float32) # (40, 296)
         pred_lf0 = lf0.squeeze() # (40, 296)
 
-        f0_reverse = revgrad(pitch_embedding, self.alpha)
-        logit_f0_noteg = self.pitch_energyclassifier(f0_reverse)
+        # f0_reverse = revgrad(pitch_embedding, self.alpha)
+        # logit_f0_noteg = self.pitch_energyclassifier(f0_reverse)
 
         x_pitch_frame = self.pitch_frame_prior_net(x_frame, pitch_embedding, x_mask)
         x_pitch_frame = x_pitch_frame.transpose(1, 2)
 
-        # energy
-        pred_energy, energy_embedding = self.energy_net(x_frame, x_mask)
-        leg = torch.unsqueeze(pred_energy, -1)
-        gt_leg = energy_real.to(torch.float32)
-        pred_leg = leg.squeeze()
+        # # energy
+        # pred_energy, energy_embedding = self.energy_net(x_frame, x_mask)
+        # leg = torch.unsqueeze(pred_energy, -1)
+        # gt_leg = energy_real.to(torch.float32)
+        # pred_leg = leg.squeeze()
 
-        energy_reverse = revgrad(energy_embedding, self.alpha)
-        logit_eg_notf0 = self.energy_pitchclassifier(energy_reverse)
+        # energy_reverse = revgrad(energy_embedding, self.alpha)
+        # logit_eg_notf0 = self.energy_pitchclassifier(energy_reverse)
 
-        x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
-        x_energy_frame = x_energy_frame.transpose(1, 2)
-
-        x_frame = x_frame + x_pitch_frame + x_energy_frame
+        # x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
+        # x_energy_frame = x_energy_frame.transpose(1, 2)
+        
+        x_frame = x_frame + x_pitch_frame # + x_energy_frame
 
         m_p, logs_p = self.project(x_frame, x_mask)
 
@@ -1390,10 +1380,10 @@ class SynthesizerTrn(nn.Module):
             pred_logw,
             gt_lf0,
             pred_lf0,
-            logit_f0_noteg,
-            gt_leg,
-            pred_leg,
-            logit_eg_notf0,
+            # logit_f0_noteg,
+            # gt_leg,
+            # pred_leg,
+            # logit_eg_notf0,
             ctc_loss,
         )
 

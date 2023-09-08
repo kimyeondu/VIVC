@@ -1,5 +1,5 @@
 {
-  "model_dir" : "./logs/multispeaker",
+  "model_dir" : "./logs/vc",
   "train": {
     "log_interval": 200,
     "eval_interval": 2000,
@@ -41,7 +41,7 @@
     "n_layers": 6,
     "kernel_size": 3,
     "p_dropout": 0.1,
-    "use_vc":true,
+    "use_vc":false,
     "resblock": "1",
     "resblock_kernel_sizes": [
       3,
