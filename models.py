@@ -376,6 +376,7 @@ class Generator(torch.nn.Module):
 
         for i in range(self.num_upsamples):
             x = F.leaky_relu(x, modules.LRELU_SLOPE)
+            x = self.ups[i](x)
             xs = None
             for j in range(self.num_kernels):
                 if xs is None:
