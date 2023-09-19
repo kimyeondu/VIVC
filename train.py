@@ -232,6 +232,14 @@ def train_and_evaluate(
         sids = sids.cuda(rank, non_blocking=True)
 
         with autocast(enabled=hps.train.fp16_run):
+            mel = spec_to_mel_torch(
+                spec,
+                hps.data.filter_length,
+                hps.data.n_mel_channels,
+                hps.data.sampling_rate,
+                hps.data.mel_fmin,
+                hps.data.mel_fmax,
+            )
 
             (
                 y_hat,
@@ -259,19 +267,12 @@ def train_and_evaluate(
                 energy_real,
                 slurs,
                 spec,
+                mel,
                 spec_lengths,
                 sids
             )
 
 
-            mel = spec_to_mel_torch(
-                spec,
-                hps.data.filter_length,
-                hps.data.n_mel_channels,
-                hps.data.sampling_rate,
-                hps.data.mel_fmin,
-                hps.data.mel_fmax,
-            )
             y_mel = commons.slice_segments(
                 mel, ids_slice, hps.train.segment_size // hps.data.hop_length
             )
@@ -533,6 +534,14 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
             wave, wave_lengths = wave.cuda(0), wave_lengths.cuda(0)
             sid = sid.cuda(0)
 
+            mel = spec_to_mel_torch(
+                spec,
+                hps.data.filter_length,
+                hps.data.n_mel_channels,
+                hps.data.sampling_rate,
+                hps.data.mel_fmin,
+                hps.data.mel_fmax,
+            )
             (
                 y_hat,
                 ids_slice,
@@ -559,20 +568,13 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
                 energy_real,
                 slurs,
                 spec,
+                mel,
                 spec_lengths,
                 sid
             )
 
             y_hat_lengths = x_mask.sum([1, 2]).long() * hps.data.hop_length
 
-            mel = spec_to_mel_torch(
-                spec,
-                hps.data.filter_length,
-                hps.data.n_mel_channels,
-                hps.data.sampling_rate,
-                hps.data.mel_fmin,
-                hps.data.mel_fmax,
-            )
             y_mel = commons.slice_segments(
                 mel, ids_slice, hps.train.segment_size // hps.data.hop_length
             )
