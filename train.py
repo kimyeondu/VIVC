@@ -232,6 +232,14 @@ def train_and_evaluate(
         sids = sids.cuda(rank, non_blocking=True)
 
         with autocast(enabled=hps.train.fp16_run):
+            mel = spec_to_mel_torch(
+                spec,
+                hps.data.filter_length,
+                hps.data.n_mel_channels,
+                hps.data.sampling_rate,
+                hps.data.mel_fmin,
+                hps.data.mel_fmax,
+            )
 
             (
                 y_hat,
@@ -243,11 +251,13 @@ def train_and_evaluate(
                 pred_logw,
                 gt_lf0,
                 pred_lf0,
+
                 pitch_embedding,
                 # logit_f0_noteg,
                 gt_leg,
                 pred_leg,
                 energy_embedding,
+
                 # logit_eg_notf0,
                 ctc_loss,
             ) = net_g(
@@ -261,19 +271,12 @@ def train_and_evaluate(
                 energy_real,
                 slurs,
                 spec,
+                mel,
                 spec_lengths,
                 sids
             )
 
 
-            mel = spec_to_mel_torch(
-                spec,
-                hps.data.filter_length,
-                hps.data.n_mel_channels,
-                hps.data.sampling_rate,
-                hps.data.mel_fmin,
-                hps.data.mel_fmax,
-            )
             y_mel = commons.slice_segments(
                 mel, ids_slice, hps.train.segment_size // hps.data.hop_length
             )
@@ -329,6 +332,7 @@ def train_and_evaluate(
                 pitch_emb_T = pitch_emb.transpose(2, 1)
                 energy_emb = energy_embedding - energy_embedding.mean(dim=0)
                 energy_emb_T = energy_emb.transpose(2, 1)         
+
                 
                 cov_pitch = (pitch_emb_T  @ pitch_emb) / (hps.train.batch_size - 1) # cov
                 cov_energy = (energy_emb_T @ energy_emb) / (hps.train.batch_size - 1)  
@@ -548,6 +552,14 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
             wave, wave_lengths = wave.cuda(0), wave_lengths.cuda(0)
             sid = sid.cuda(0)
 
+            mel = spec_to_mel_torch(
+                spec,
+                hps.data.filter_length,
+                hps.data.n_mel_channels,
+                hps.data.sampling_rate,
+                hps.data.mel_fmin,
+                hps.data.mel_fmax,
+            )
             (
                 y_hat,
                 ids_slice,
@@ -558,11 +570,13 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
                 pred_logw,
                 gt_lf0,
                 pred_lf0,
+
                 pitch_embedding,
                 # logit_f0_noteg,
                 gt_leg,
                 pred_leg,
                 energy_embedding,
+
                 # logit_eg_notf0,
                 ctc_loss,
             ) = generator.module.infer(
@@ -576,20 +590,13 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
                 energy_real,
                 slurs,
                 spec,
+                mel,
                 spec_lengths,
                 sid
             )
 
             y_hat_lengths = x_mask.sum([1, 2]).long() * hps.data.hop_length
 
-            mel = spec_to_mel_torch(
-                spec,
-                hps.data.filter_length,
-                hps.data.n_mel_channels,
-                hps.data.sampling_rate,
-                hps.data.mel_fmin,
-                hps.data.mel_fmax,
-            )
             y_mel = commons.slice_segments(
                 mel, ids_slice, hps.train.segment_size // hps.data.hop_length
             )
@@ -631,6 +638,7 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
                     loss_pitch = mse_loss(gt_lf0, pred_lf0)
                     # loss_pitch_noteg = mse_loss(gt_leg, logit_f0_noteg)
 
+
                     loss_energy = mse_loss(gt_leg, pred_leg)
                     # loss_energy_notf0 = mse_loss(gt_lf0, logit_eg_notf0)
 
@@ -645,8 +653,7 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
                     cov_pe = (pitch_emb @ energy_emb_T) / (hps.train.batch_size -1)
                     # loss_corr = (cov_pe @ cov_pe).sum().div(cov_pitch.shape[-1]*cov_energy.shape[-1])
                     loss_corr = cov_pe.flatten().pow_(2).sum().div(cov_pitch.shape[-1]*cov_energy.shape[-1])
-                                                   
-                    
+
 
                     loss_gen_all = (
                         loss_gen
