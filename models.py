@@ -1373,6 +1373,8 @@ class SynthesizerTrn(nn.Module):
             z, y_lengths, self.segment_size
         )
         o = self.dec(z_slice, g=g)
+
+        
         return (
             o,
             ids_slice,
@@ -1541,7 +1543,7 @@ class Synthesizer(nn.Module):
             self.emb_g = nn.Embedding(n_speakers, gin_channels)        
 
     def infer(
-        self, phone, phone_lengths, score, score_dur, slurs, energy, sid, max_len=None
+        self, phone, phone_lengths, score, score_dur, slurs, energy, max_len=None
     ):
         x, x_mask = self.enc_p(phone, score, score_dur, energy, slurs, phone_lengths)
 

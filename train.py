@@ -471,26 +471,26 @@ def train_and_evaluate(
                 )
                 keep_num = hps.train.keep_n_models
                 eval_interval = hps.train.eval_interval
-                if global_step / eval_interval >= keep_num:
-                    try:
-                        os.remove(
-                            os.path.join(
-                                hps.model_dir,
-                                "G_{}.pth".format(
-                                    global_step - keep_num * eval_interval
-                                ),
-                            )
-                        )
-                        os.remove(
-                            os.path.join(
-                                hps.model_dir,
-                                "D_{}.pth".format(
-                                    global_step - keep_num * eval_interval
-                                ),
-                            )
-                        )
-                    except OSError:
-                        pass
+                # if global_step / eval_interval >= keep_num:
+                #     try:
+                #         os.remove(
+                #             os.path.join(
+                #                 hps.model_dir,
+                #                 "G_{}.pth".format(
+                #                     global_step - keep_num * eval_interval
+                #                 ),
+                #             )
+                #         )
+                #         os.remove(
+                #             os.path.join(
+                #                 hps.model_dir,
+                #                 "D_{}.pth".format(
+                #                     global_step - keep_num * eval_interval
+                #                 ),
+                #             )
+                #         )
+                #     except OSError:
+                #         pass
 
         global_step += 1
 
@@ -659,7 +659,7 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
                         + loss_energy
                         # + (loss_energy_notf0*0.05)
                         + ctc_loss
-                        + loss_corr * 0.01
+                        + loss_corr #* 0.01
                     )
 
                     loss_disc_avg += loss_disc
