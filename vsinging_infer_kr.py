@@ -26,7 +26,8 @@ use_cuda = True
 
 # define model and load checkpoint
 # hps = utils.get_hparams_from_file("./configs/singing_base.json")
-hps = utils.get_hparams_from_file("./logs/dann3/config.json")
+# /home/work/PJT/VIVC/logs/emb/G_162000.pth
+hps = utils.get_hparams_from_file("./logs/emb/config.json")
 
 vocab_size = get_vocab_size()
 
@@ -40,7 +41,7 @@ net_g = Synthesizer(
 if use_cuda:
     net_g = net_g.cuda()
 
-_ = utils.load_checkpoint("./logs/dann3/G_220000.pth", net_g, None)
+_ = utils.load_checkpoint("./logs/emb/G_162000.pth", net_g, None)
 net_g.eval()
 # net_g.remove_weight_norm()
 

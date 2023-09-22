@@ -1234,20 +1234,20 @@ class SynthesizerTrn(nn.Module):
         x_pitch_frame = self.pitch_frame_prior_net(x_frame, pitch_embedding, x_mask) # (296, 192)
         x_pitch_frame = x_pitch_frame.transpose(1, 2) # (192, 290)
 
-        # # energy predictor (+dann)
-        # pred_energy, energy_embedding = self.energy_net(x_frame, x_mask)
-        # leg = torch.unsqueeze(pred_energy, -1)
-        # gt_leg = energy_real.to(torch.float32)
-        # pred_leg = leg.squeeze()
+        # energy predictor (+dann)
+        pred_energy, energy_embedding = self.energy_net(x_frame, x_mask)
+        leg = torch.unsqueeze(pred_energy, -1)
+        gt_leg = energy_real.to(torch.float32)
+        pred_leg = leg.squeeze()
         
         # eg_reverse = revgrad(energy_embedding, self.alpha)
         # logit_eg_notf0 = self.energy_pitchclassifier(eg_reverse)
 
-        # x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
-        # x_energy_frame = x_energy_frame.transpose(1, 2)
+        x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
+        x_energy_frame = x_energy_frame.transpose(1, 2)
 
 
-        x_frame = x_frame + x_pitch_frame #+ x_energy_frame
+        x_frame = x_frame + x_pitch_frame + x_energy_frame
 
         m_p, logs_p = self.project(x_frame, x_mask)
 
@@ -1275,9 +1275,11 @@ class SynthesizerTrn(nn.Module):
             pred_logw,
             gt_lf0,
             pred_lf0,
+            pitch_embedding,
             # logit_f0_noteg,
-            # gt_leg,
-            # pred_leg,
+            gt_leg,
+            pred_leg,
+            energy_embedding,
             # logit_eg_notf0,
             ctc_loss,
         )
@@ -1341,19 +1343,19 @@ class SynthesizerTrn(nn.Module):
         x_pitch_frame = self.pitch_frame_prior_net(x_frame, pitch_embedding, x_mask)
         x_pitch_frame = x_pitch_frame.transpose(1, 2)
 
-        # # energy
-        # pred_energy, energy_embedding = self.energy_net(x_frame, x_mask)
-        # leg = torch.unsqueeze(pred_energy, -1)
-        # gt_leg = energy_real.to(torch.float32)
-        # pred_leg = leg.squeeze()
+        # energy
+        pred_energy, energy_embedding = self.energy_net(x_frame, x_mask)
+        leg = torch.unsqueeze(pred_energy, -1)
+        gt_leg = energy_real.to(torch.float32)
+        pred_leg = leg.squeeze()
 
         # energy_reverse = revgrad(energy_embedding, self.alpha)
         # logit_eg_notf0 = self.energy_pitchclassifier(energy_reverse)
 
-        # x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
-        # x_energy_frame = x_energy_frame.transpose(1, 2)
+        x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
+        x_energy_frame = x_energy_frame.transpose(1, 2)
         
-        x_frame = x_frame + x_pitch_frame # + x_energy_frame
+        x_frame = x_frame + x_pitch_frame + x_energy_frame
 
         m_p, logs_p = self.project(x_frame, x_mask)
 
@@ -1381,9 +1383,11 @@ class SynthesizerTrn(nn.Module):
             pred_logw,
             gt_lf0,
             pred_lf0,
+            pitch_embedding,
             # logit_f0_noteg,
-            # gt_leg,
-            # pred_leg,
+            gt_leg,
+            pred_leg,
+            energy_embedding,
             # logit_eg_notf0,
             ctc_loss,
         )

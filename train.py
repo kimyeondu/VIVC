@@ -243,10 +243,12 @@ def train_and_evaluate(
                 pred_logw,
                 gt_lf0,
                 pred_lf0,
-                logit_f0_noteg,
+                pitch_embedding,
+                # logit_f0_noteg,
                 gt_leg,
                 pred_leg,
-                logit_eg_notf0,
+                energy_embedding,
+                # logit_eg_notf0,
                 ctc_loss,
             ) = net_g(
                 phone,
@@ -318,11 +320,23 @@ def train_and_evaluate(
 
                 loss_dur = mse_loss(gt_logw, pred_logw)
                 loss_pitch = mse_loss(gt_lf0, pred_lf0)
-                loss_pitch_noteg = mse_loss(gt_leg, logit_f0_noteg)
+                # loss_pitch_noteg = mse_loss(gt_leg, logit_f0_noteg)
 
                 loss_energy = mse_loss(gt_leg, pred_leg)
-                loss_energy_notf0 = mse_loss(gt_lf0, logit_eg_notf0)
+                # loss_energy_notf0 = mse_loss(gt_lf0, logit_eg_notf0)
+
+                pitch_emb = pitch_embedding - pitch_embedding.mean(dim=0)
+                pitch_emb_T = pitch_emb.transpose(2, 1)
+                energy_emb = energy_embedding - energy_embedding.mean(dim=0)
+                energy_emb_T = energy_emb.transpose(2, 1)         
                 
+                cov_pitch = (pitch_emb_T  @ pitch_emb) / (hps.train.batch_size - 1) # cov
+                cov_energy = (energy_emb_T @ energy_emb) / (hps.train.batch_size - 1)  
+
+                cov_pe = (pitch_emb @ energy_emb_T) / (hps.train.batch_size -1)
+                # loss_corr = (cov_pe @ cov_pe).sum().div(cov_pitch.shape[-1]*cov_energy.shape[-1])       
+                loss_corr = cov_pe.flatten().pow_(2).sum().div(cov_pitch.shape[-1]*cov_energy.shape[-1])
+
                 loss_gen_all = (
                     loss_gen
                     + loss_fm
@@ -330,10 +344,11 @@ def train_and_evaluate(
                     + loss_kl
                     + loss_dur
                     + loss_pitch
-                    + (loss_pitch_noteg*0.05)
+                    # + (loss_pitch_noteg*0.05)
                     + loss_energy
-                    + (loss_energy_notf0*0.05)
+                    # + (loss_energy_notf0*0.05)
                     + ctc_loss
+                    + loss_corr # *0.01
                 )
         optim_g.zero_grad()
         scaler.scale(loss_gen_all).backward()
@@ -357,10 +372,11 @@ def train_and_evaluate(
                     loss_mel,
                     loss_dur,
                     loss_pitch,
-                    loss_pitch_noteg,
+                    # loss_pitch_noteg,
                     loss_energy,
-                    loss_energy_notf0,
+                    # loss_energy_notf0,
                     ctc_loss,
+                    loss_corr,
                 ]
                 logger.info(
                     "Train Epoch: {} [{:.0f}%]".format(
@@ -383,9 +399,9 @@ def train_and_evaluate(
                 )
                 logger.info(
                     f"loss_mel={loss_mel:.3f}, loss_kl={loss_kl:.3f}, loss_dur={loss_dur:.3f}, \
-                    loss_pitch={loss_pitch:.3f}, loss_pitch_noteg={loss_pitch_noteg:.3f}, \
-                    loss_energy={loss_energy:.3f}, loss_energy_notf0={loss_energy_notf0:.3f}, \
-                    ctc_loss={ctc_loss:.3f}"
+                    loss_pitch={loss_pitch:.3f}, loss_energy={loss_energy:.3f},\
+                    ctc_loss={ctc_loss:.3f}, loss_corr={loss_corr:.3f}"
+                    #  loss_pitch_noteg={loss_pitch_noteg:.3f}, loss_energy_notf0={loss_energy_notf0:.3f}, \
                 )
 
                 scalar_dict = {
@@ -402,10 +418,11 @@ def train_and_evaluate(
                         "loss/g/kl": loss_kl,
                         "loss/g/dur": loss_dur,
                         "loss/g/pitch": loss_pitch,
-                        "loss/g/pitch_noteg": loss_pitch_noteg,
+                        # "loss/g/pitch_noteg": loss_pitch_noteg,
                         "loss/g/energy": loss_energy,
-                        "loss/g/energy_notf0": loss_energy_notf0,
+                        # "loss/g/energy_notf0": loss_energy_notf0,
                         "loss/g/ctc": ctc_loss,
+                        "loss/g/corr": loss_corr
                     }
                 )
 
@@ -493,6 +510,7 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
     loss_energy_avg = 0
     loss_energy_notf0_avg = 0
     ctc_loss_avg = 0
+    loss_corr_avg = 0
     loss_kl_avg = 0
     loss_gen_all_avg = 0
     loss_disc_all_avg = 0
@@ -540,10 +558,12 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
                 pred_logw,
                 gt_lf0,
                 pred_lf0,
-                logit_f0_noteg,
+                pitch_embedding,
+                # logit_f0_noteg,
                 gt_leg,
                 pred_leg,
-                logit_eg_notf0,
+                energy_embedding,
+                # logit_eg_notf0,
                 ctc_loss,
             ) = generator.module.infer(
                 phone,
@@ -609,10 +629,24 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
 
                     loss_dur = mse_loss(gt_logw, pred_logw)
                     loss_pitch = mse_loss(gt_lf0, pred_lf0)
-                    loss_pitch_noteg = mse_loss(gt_leg, logit_f0_noteg)
+                    # loss_pitch_noteg = mse_loss(gt_leg, logit_f0_noteg)
 
                     loss_energy = mse_loss(gt_leg, pred_leg)
-                    loss_energy_notf0 = mse_loss(gt_lf0, logit_eg_notf0)
+                    # loss_energy_notf0 = mse_loss(gt_lf0, logit_eg_notf0)
+
+                    pitch_emb = pitch_embedding - pitch_embedding.mean(dim=0)
+                    pitch_emb_T = pitch_emb.transpose(2, 1)
+                    energy_emb = energy_embedding - energy_embedding.mean(dim=0)
+                    energy_emb_T = energy_emb.transpose(2, 1)        
+                    
+                    cov_pitch = (pitch_emb_T  @ pitch_emb) / (hps.train.batch_size - 1) # cov
+                    cov_energy = (energy_emb_T @ energy_emb) / (hps.train.batch_size - 1)                       
+                    
+                    cov_pe = (pitch_emb @ energy_emb_T) / (hps.train.batch_size -1)
+                    # loss_corr = (cov_pe @ cov_pe).sum().div(cov_pitch.shape[-1]*cov_energy.shape[-1])
+                    loss_corr = cov_pe.flatten().pow_(2).sum().div(cov_pitch.shape[-1]*cov_energy.shape[-1])
+                                                   
+                    
 
                     loss_gen_all = (
                         loss_gen
@@ -621,10 +655,11 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
                         + loss_kl
                         + loss_dur
                         + loss_pitch
-                        + (loss_pitch_noteg *0.05)
+                        # + (loss_pitch_noteg *0.05)
                         + loss_energy
-                        + (loss_energy_notf0*0.05)
+                        # + (loss_energy_notf0*0.05)
                         + ctc_loss
+                        + loss_corr * 0.01
                     )
 
                     loss_disc_avg += loss_disc
@@ -633,10 +668,11 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
                     loss_mel_avg += loss_mel
                     loss_dur_avg += loss_dur
                     loss_pitch_avg += loss_pitch
-                    loss_pitch_noteg_avg += loss_pitch_noteg
+                    # loss_pitch_noteg_avg += loss_pitch_noteg
                     loss_energy_avg += loss_energy
-                    loss_energy_notf0_avg += loss_energy_notf0
+                    # loss_energy_notf0_avg += loss_energy_notf0
                     ctc_loss_avg += ctc_loss
+                    loss_corr_avg += loss_corr
                     loss_kl_avg += loss_kl
                     loss_gen_all_avg += loss_gen_all
                     loss_disc_all_avg += loss_disc_all
@@ -654,10 +690,11 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
         loss_mel_avg = loss_mel_avg / len(eval_loader)
         loss_dur_avg = loss_dur_avg / len(eval_loader)
         loss_pitch_avg = loss_pitch_avg / len(eval_loader)
-        loss_pitch_noteg_avg = loss_pitch_noteg_avg / len(eval_loader)
+        # loss_pitch_noteg_avg = loss_pitch_noteg_avg / len(eval_loader)
         loss_energy_avg = loss_energy_avg / len(eval_loader)
-        loss_energy_notf0_avg = loss_energy_notf0_avg / len(eval_loader)
+        # loss_energy_notf0_avg = loss_energy_notf0_avg / len(eval_loader)
         ctc_loss_avg = ctc_loss_avg / len(eval_loader)
+        loss_corr_avg = loss_corr_avg / len(eval_loader)
         loss_kl_avg = loss_kl_avg / len(eval_loader)
         loss_gen_all_avg = loss_gen_all_avg / len(eval_loader)
         loss_disc_all_avg = loss_disc_all_avg / len(eval_loader)
@@ -679,9 +716,9 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
         )
         logger.info(
             f"loss_mel={loss_mel_avg:.3f}, loss_kl={loss_kl_avg:.3f}, loss_dur={loss_dur_avg:.3f}, \
-            loss_pitch={loss_pitch_avg:.3f}, loss_pitch_noteg={loss_pitch_noteg_avg:.3f}, \
-            loss_energy={loss_energy_avg:.3f}, loss_energy_notf0={loss_energy_notf0_avg:.3f}, \
-            ctc_loss={ctc_loss_avg:.3f}"
+            loss_pitch={loss_pitch_avg:.3f}, loss_energy={loss_energy_avg:.3f}, \
+            ctc_loss={ctc_loss_avg:.3f}, loss_corr={loss_corr_avg:.3f}"
+            # loss_pitch_noteg={loss_pitch_noteg_avg:.3f}, loss_energy_notf0={loss_energy_notf0_avg:.3f}, \
         )
 
         scalar_dict = {
@@ -695,10 +732,11 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
                 "loss/g/kl": loss_kl_avg,
                 "loss/g/dur": loss_dur_avg,
                 "loss/g/pitch": loss_pitch_avg,
-                "loss/g/pitch_noteg": loss_pitch_noteg_avg,
+                # "loss/g/pitch_noteg": loss_pitch_noteg_avg,
                 "loss/g/energy": loss_energy_avg,
-                "loss/g/energy_notf0": loss_energy_notf0_avg,
+                # "loss/g/energy_notf0": loss_energy_notf0_avg,
                 "loss/g/ctc": ctc_loss_avg,
+                "loss/g/corr": loss_corr_avg
             }
         )
 
