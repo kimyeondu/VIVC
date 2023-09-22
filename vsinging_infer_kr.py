@@ -27,8 +27,10 @@ def save_wav(wav, path, rate):
 use_cuda = True
 
 # define model and load checkpoint
-log = './logs/test/'
-model = 'G_86000.pth'
+
+log = './logs/emb/'
+model = 'G_162000.pth'
+
 infer_list = "./vsinging_infer_kr.txt"
 output = log+'output'
 hps = utils.get_hparams_from_file(log+"config.json")
@@ -90,18 +92,20 @@ while True:
     # score = torch.LongTensor(scores_ids)
     score_int = np.array(scores_ids, dtype=int)
     score = torch.LongTensor(score_int)
+    print(f'scores_dur ? : {scores_dur}')
 
     score_dur = torch.LongTensor(scores_dur)
     slurs = torch.LongTensor(labels_slr)
 
     energy_int = np.array(energy_ids, dtype=int)
-    energy = torch.LongTensor(energy_int)
+    energy = torch.LongTensor(energy_int)//2
 
     sid = torch.tensor(int(sid), dtype=torch.int16)
 
     phone_dur = score_dur
     phone_lengths = phone.size()[0]
 
+    # vc
     # spec_filename = file.replace(".wav", ".spec.pt")
     spec_filename = "/home/work/PJT/VISinger/VISinger_data_bk/wav_dump_24k/1841/150351/1841_150351_000000_000000_bits16.spec.pt"
     spec = torch.load(spec_filename)    
@@ -115,6 +119,7 @@ while True:
         hps.data.mel_fmax,
     )
 
+    # prosody_encoder
     print(f'phone : {phone}')
     print(f'score : {score}')
     print(f'score_dur : {score_dur}')
@@ -124,6 +129,7 @@ while True:
     print(f'phone_lengths : {phone_lengths}')
     print(f'mel : {len(mel)}')
 
+    # break
     begin_time = time()
     with torch.no_grad():
         if use_cuda:
@@ -132,6 +138,7 @@ while True:
             score_dur = score_dur.cuda().unsqueeze(0)
             slurs = slurs.cuda().unsqueeze(0)
             phone_lengths = torch.LongTensor([phone_lengths]).cuda()
+            # vc
             sid = sid.cuda()
             energy = energy.cuda()
             mel = mel.unsqueeze(0)
@@ -146,7 +153,10 @@ while True:
             phone_lengths = torch.LongTensor([phone_lengths])
             mel = mel.unsqueeze(0)
         audio = (
+            # vc
             # self, phone, score, score_dur, energy, slurs, lengths
+            # prosody_encoder
+            net_g.infer(phone, phone_lengths, score, score_dur, slurs, energy)[0][0, 0]
             # net_g.infer(phone, phone_lengths, phone_dur, score, score_dur,  slurs)[0][0, 0]
             net_g.infer(phone, phone_lengths, score, score_dur, slurs, energy, mel)[0][0, 0]
             .data.cpu()
@@ -160,6 +170,7 @@ while True:
     print("Wave Time (Seconds):", data_len)
     print("Real time Rate (%):", run_time / data_len)
     filename = file.split('/')[-1]
+
     save_wav(audio, f"{output}/{filename}_female1841.wav", hps.data.sampling_rate)
 fo.close()
 # can be deleted

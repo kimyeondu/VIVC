@@ -1,5 +1,7 @@
 {
+
   "model_dir" : "./logs/vc",
+
   "train": {
     "log_interval": 200,
     "eval_interval": 2000,

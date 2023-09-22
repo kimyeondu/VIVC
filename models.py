@@ -1262,6 +1262,7 @@ class SynthesizerTrn(nn.Module):
 
         if n_speakers > 1:
             self.emb_g = nn.Embedding(n_speakers, gin_channels)
+
         
         if use_vc:
             self.enc_spk = SpeakerEncoder(
@@ -1269,6 +1270,7 @@ class SynthesizerTrn(nn.Module):
                 model_embedding_size=gin_channels
             )
             # self.enc_spk = SpeakerEncoder_CNN()
+
 
     def forward(
         self,
@@ -1289,6 +1291,7 @@ class SynthesizerTrn(nn.Module):
         
         x, x_mask = self.enc_p(phone, score, score_dur, energy, slurs, phone_lengths)
 
+
         # if self.n_speakers > 0:
         #     g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
         # else:
@@ -1296,6 +1299,7 @@ class SynthesizerTrn(nn.Module):
         if self.use_vc:
             g = self.enc_spk(mel.transpose(1,2)).unsqueeze(-1)
             # g = self.enc_spk(mel)
+
 
         # duration
         w = phone_dur.unsqueeze(1)
@@ -1346,11 +1350,12 @@ class SynthesizerTrn(nn.Module):
         # eg_reverse = revgrad(energy_embedding, self.alpha)
         # logit_eg_notf0 = self.energy_pitchclassifier(eg_reverse)
 
-        # x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
-        # x_energy_frame = x_energy_frame.transpose(1, 2)
 
+        x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
+        x_energy_frame = x_energy_frame.transpose(1, 2)
 
-        x_frame = x_frame + x_pitch_frame #+ x_energy_frame
+        x_frame = x_frame + x_pitch_frame + x_energy_frame
+
 
         m_p, logs_p = self.project(x_frame, x_mask)
 
@@ -1378,9 +1383,12 @@ class SynthesizerTrn(nn.Module):
             pred_logw,
             gt_lf0,
             pred_lf0,
+
+            pitch_embedding,
             # logit_f0_noteg,
-            # gt_leg,
-            # pred_leg,
+            gt_leg,
+            pred_leg,
+            energy_embedding,
             # logit_eg_notf0,
             ctc_loss,
         )
@@ -1404,12 +1412,14 @@ class SynthesizerTrn(nn.Module):
         # x, x_mask = self.enc_p(phone, score, score_dur, slurs, phone_lengths,  energy)
 
         x, x_mask = self.enc_p(phone, score, score_dur, energy, slurs, phone_lengths)
+
         # if self.n_speakers > 0:
         #     g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
         # else:
         #     g = None
         if self.use_vc:
             g = self.enc_spk(mel.transpose(1,2)).unsqueeze(-1)  
+
         # duration
         w = phone_dur.unsqueeze(1)
         gt_logw = w * x_mask
@@ -1446,19 +1456,20 @@ class SynthesizerTrn(nn.Module):
         x_pitch_frame = self.pitch_frame_prior_net(x_frame, pitch_embedding, x_mask)
         x_pitch_frame = x_pitch_frame.transpose(1, 2)
 
-        # # energy
-        # pred_energy, energy_embedding = self.energy_net(x_frame, x_mask)
-        # leg = torch.unsqueeze(pred_energy, -1)
-        # gt_leg = energy_real.to(torch.float32)
-        # pred_leg = leg.squeeze()
+        # energy
+        pred_energy, energy_embedding = self.energy_net(x_frame, x_mask)
+        leg = torch.unsqueeze(pred_energy, -1)
+        gt_leg = energy_real.to(torch.float32)
+        pred_leg = leg.squeeze()
 
         # energy_reverse = revgrad(energy_embedding, self.alpha)
         # logit_eg_notf0 = self.energy_pitchclassifier(energy_reverse)
 
-        # x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
-        # x_energy_frame = x_energy_frame.transpose(1, 2)
+        x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
+        x_energy_frame = x_energy_frame.transpose(1, 2)
         
-        x_frame = x_frame + x_pitch_frame # + x_energy_frame
+        x_frame = x_frame + x_pitch_frame + x_energy_frame
+
 
         m_p, logs_p = self.project(x_frame, x_mask)
 
@@ -1476,6 +1487,8 @@ class SynthesizerTrn(nn.Module):
             z, y_lengths, self.segment_size
         )
         o = self.dec(z_slice, g=g)
+
+        
         return (
             o,
             ids_slice,
@@ -1486,9 +1499,12 @@ class SynthesizerTrn(nn.Module):
             pred_logw,
             gt_lf0,
             pred_lf0,
+
+            pitch_embedding,
             # logit_f0_noteg,
-            # gt_leg,
-            # pred_leg,
+            gt_leg,
+            pred_leg,
+            energy_embedding,
             # logit_eg_notf0,
             ctc_loss,
         )

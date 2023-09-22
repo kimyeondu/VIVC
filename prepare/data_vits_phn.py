@@ -115,6 +115,12 @@ class SingInput(object):
         logging.info("file {}".format(file))
         logging.info("lyrics {}".format(hanz))
         logging.info("phn {}".format(phon))
+        # logging.info("note_ids {}".format(note_ids))
+        # logging.info("note {}".format(note))
+        # logging.info("note_dur {}".format(note_dur))
+        # logging.info("phon_dur {}".format(phon_dur))
+        # logging.info("dur_id {}".format(dur_id))
+        # logging.info("energy_id {}".format(energy_id))
 
 
         labels_ids = label_to_ids(phon)

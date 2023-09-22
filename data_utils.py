@@ -314,7 +314,8 @@ class TextAudioCollate:
 
             energy_real = row[6]
             # score_padded[i, : score.size(0)] = score
-            energy_real_padded[i, : energy_real.size(0)] = energy_real/2
+
+            energy_real_padded[i, : energy_real.size(0)] = energy_real/20 # 0~10
 
             slurs = row[7]
             slurs_padded[i, : slurs.size(0)] = slurs
