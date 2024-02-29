@@ -7,12 +7,14 @@ from torch.nn import functional as F
 import commons
 import modules
 import attentions
+# from prepare.dur_to_frame import dur_to_frame
 
 from torch.nn import Conv1d, ConvTranspose1d, AvgPool1d, Conv2d
 from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
 from commons import init_weights, get_padding
 from gradient_reversal import revgrad
-
+from mel_processing import mel_spectrogram_torch, spec_to_mel_torch
+import pdb
 
 
 class DurationPredictor(nn.Module):
@@ -157,16 +159,15 @@ class TextEncoder(nn.Module):
 
         self.emb_phone = nn.Embedding(n_vocab, hidden_channels)  # phone lables
         # self.emb_score = nn.Embedding(128, hidden_channels)  # pitch notes
-        # self.emb_score = nn.Embedding(12, hidden_channels)  # pitch cluster
         self.emb_score = nn.Embedding(12, hidden_channels)  # pitch cluster (score)
         self.emb_score_dur = nn.Embedding(600, hidden_channels)  # 512
-        self.emb_slurs = nn.Embedding(2, hidden_channels)  # phone slur
+        # self.emb_slurs = nn.Embedding(2, hidden_channels)  # phone slur
         self.emb_energy = nn.Embedding(11, hidden_channels)  # energy id (0~20)
         nn.init.normal_(self.emb_phone.weight, 0.0, hidden_channels**-0.5)
         nn.init.normal_(self.emb_score.weight, 0.0, hidden_channels**-0.5)
         nn.init.normal_(self.emb_score_dur.weight, 0.0, hidden_channels**-0.5)
         nn.init.normal_(self.emb_energy.weight, 0.0, hidden_channels**-0.5)
-        nn.init.normal_(self.emb_slurs.weight, 0.0, hidden_channels**-0.5)
+        # nn.init.normal_(self.emb_slurs.weight, 0.0, hidden_channels**-0.5)
 
         self.encoder = attentions.Encoder(
             hidden_channels, filter_channels, n_heads, n_layers, kernel_size, p_dropout
@@ -184,29 +185,19 @@ class TextEncoder(nn.Module):
     def forward(self, phone, score, score_dur, energy, slurs, lengths):
 
         x = self.emb_phone(phone)
-        # print(x.size)
-        # print(score.size)
-        # print(score)
-        # print("phone :: ", phone.shape)
-        # print("score :: ", score.shape)
-        # print("score :: ", score)
-        # print("score_dur ::", score_dur.shape)
-        # print("slurs :: ", slurs.shape)
-        # print("lengths :: ", lengths.shape)
-        score_embedding = self.emb_score(score)
-        # energy_embedding = self.emb_energy(energy)
 
+        score_embedding = self.emb_score(score)
+        energy_embedding = self.emb_energy(energy)
         x = x + self.emb_score(score)
         x = x + self.emb_score_dur(score_dur)
-        x = x + self.emb_slurs(slurs)
-        # x = x + self.emb_energy(energy)
+        x = x + self.emb_energy(energy)
+        # x = x + self.emb_slurs(slurs)
 
         x = x * math.sqrt(self.hidden_channels)  # [b, t, h]
         x = torch.transpose(x, 1, -1)  # [b, h, t]
         x_mask = torch.unsqueeze(commons.sequence_mask(lengths, x.size(2)), 1).to(
             x.dtype
         )
-
 
         x = self.encoder(x * x_mask, x_mask)
 
@@ -224,7 +215,7 @@ class TextEncoder(nn.Module):
 
         # m, logs = torch.split(stats, self.out_channels, dim=1)
         # return x, m, logs, x_mask
-        return x, x_mask
+        return x, x_mask, score_embedding, energy_embedding
 
 
 class ResidualCouplingBlock(nn.Module):
@@ -768,7 +759,7 @@ class PitchFramePriorNet(nn.Module):
 
         self.n_vocab = n_vocab
         self.out_channels = out_channels
-        self.hidden_channels = hidden_channels
+        self.hidden_channels = hidden_channels //2
         self.filter_channels = filter_channels
         self.n_heads = n_heads
         self.n_layers = n_layers
@@ -801,7 +792,7 @@ class EnergyFramePriorNet(nn.Module):
 
         self.n_vocab = n_vocab
         self.out_channels = out_channels
-        self.hidden_channels = hidden_channels
+        self.hidden_channels = hidden_channels //2
         self.filter_channels = filter_channels
         self.n_heads = n_heads
         self.n_layers = n_layers
@@ -909,131 +900,259 @@ class Energy_PitchClassifier(nn.Module):
 
         return x
 
-# class LearnedDownSample(nn.Module):
-#     def __init__(self, layer_type, dim_in):
-#         super().__init__()
-#         self.layer_type = layer_type
+class Style_PitchClassifier(nn.Module):
+    def __init__(
+        self,
+        n_vocab,
+        out_channels,
+        hidden_channels,
+        filter_channels,
+        n_heads,
+        n_layers,
+        kernel_size,
+        p_dropout,
+        pitch_class=12
+    ):
+        super().__init__()
 
-#         if self.layer_type == 'none':
-#             self.conv = nn.Identity()
-#         elif self.layer_type == 'timepreserve':
-#             self.conv = spectral_norm(nn.Conv2d(dim_in, dim_in, kernel_size=(3, 1), stride=(2, 1), groups=dim_in, padding=(1, 0)))
-#         elif self.layer_type == 'half':
-#             self.conv = spectral_norm(nn.Conv2d(dim_in, dim_in, kernel_size=(3, 3), stride=(2, 2), groups=dim_in, padding=1))
-#         else:
-#             raise RuntimeError('Got unexpected donwsampletype %s, expected is [none, timepreserve, half]' % self.layer_type)
-            
-#     def forward(self, x):
-#         return self.conv(x)
+        self.n_vocab = n_vocab
+        self.out_channels = out_channels
+        self.hidden_channels = hidden_channels
+        self.filter_channels = filter_channels
+        self.n_heads = n_heads
+        self.n_layers = n_layers
+        self.kernel_size = kernel_size
+        self.p_dropout = p_dropout
+        self.pitch_class = pitch_class
 
-# class DownSample(nn.Module):
-#     def __init__(self, layer_type):
-#         super().__init__()
-#         self.layer_type = layer_type
+        self.classifier = nn.Sequential(
+            nn.Linear(self.hidden_channels, self.hidden_channels//2),
+            nn.Linear(self.hidden_channels//2, self.hidden_channels),
+            )            
+        self.avg_pool = nn.AdaptiveAvgPool1d(1)  # Global Average Pooling
+        # self.proj = nn.Conv1d(self.hidden_channels, 1, 1)
 
-#     def forward(self, x):
-#         if self.layer_type == 'none':
-#             return x
-#         elif self.layer_type == 'timepreserve':
-#             return F.avg_pool2d(x, (2, 1))
-#         elif self.layer_type == 'half':
-#             if x.shape[-1] % 2 != 0:
-#                 x = torch.cat([x, x[..., -1].unsqueeze(-1)], dim=-1)
-#             return F.avg_pool2d(x, 2)
-#         else:
-#             raise RuntimeError('Got unexpected donwsampletype %s, expected is [none, timepreserve, half]' % self.layer_type)
+    def forward(self, feature_embedding):
+        # (40, 192, 296)
+        x = feature_embedding.transpose(1, 2) # (b, mel, hidden=192)
+        x = self.classifier(x) # (b, mel, hidden)
+        # # (1)
+        # x = self.proj(x)
+        # x = x.squeeze()
+        
+        # (2)
+        x = self.avg_pool(x).squeeze(-1) # (b, mel)
 
-
-# class ResBlk(nn.Module):
-#     def __init__(self, dim_in, dim_out, actv=nn.LeakyReLU(0.2),
-#                  normalize=False, downsample='none'):
-#         super().__init__()
-#         self.actv = actv
-#         self.normalize = normalize
-#         self.downsample = DownSample(downsample)
-#         self.downsample_res = LearnedDownSample(downsample, dim_in)
-#         self.learned_sc = dim_in != dim_out
-#         self._build_weights(dim_in, dim_out)
-
-#     def _build_weights(self, dim_in, dim_out):
-#         self.conv1 = spectral_norm(nn.Conv2d(dim_in, dim_in, 3, 1, 1))
-#         self.conv2 = spectral_norm(nn.Conv2d(dim_in, dim_out, 3, 1, 1))
-#         if self.normalize:
-#             self.norm1 = nn.InstanceNorm2d(dim_in, affine=True)
-#             self.norm2 = nn.InstanceNorm2d(dim_in, affine=True)
-#         if self.learned_sc:
-#             self.conv1x1 = spectral_norm(nn.Conv2d(dim_in, dim_out, 1, 1, 0, bias=False))
-
-#     def _shortcut(self, x):
-#         if self.learned_sc:
-#             x = self.conv1x1(x)
-#         if self.downsample:
-#             x = self.downsample(x)
-#         return x
-
-#     def _residual(self, x):
-#         if self.normalize:
-#             x = self.norm1(x)
-#         x = self.actv(x)
-#         x = self.conv1(x)
-#         x = self.downsample_res(x)
-#         if self.normalize:
-#             x = self.norm2(x)
-#         x = self.actv(x)
-#         x = self.conv2(x)
-#         return x
-
-#     def forward(self, x):
-#         x = self._shortcut(x) + self._residual(x)
-#         return x / math.sqrt(2)  # unit variance
-
-# class SpeakerEncoder_StyleVC(nn.Module):
-#     '''
-#     styletts-vc
-#     CNN
-#     '''
-#     def __init__(self, dim_in=256, style_dim=256, max_conv_dim=256):
-#         super().__init__()
-#         blocks = []
-#         blocks += [spectral_norm(nn.Conv2d(1, dim_in, 3, 1, 1))]
-
-#         repeat_num = 4
-#         for _ in range(repeat_num):
-#             dim_out = min(dim_in*2, max_conv_dim)
-#             blocks += [ResBlk(dim_in, dim_out, downsample='half')]
-#             dim_in = dim_out
-
-#         blocks += [nn.LeakyReLU(0.2)]
-#         blocks += [spectral_norm(nn.Conv2d(dim_out, dim_out, 5, 1, 0))]
-#         blocks += [nn.AdaptiveAvgPool2d(1)]
-#         blocks += [nn.LeakyReLU(0.2)]
-#         self.shared = nn.Sequential(*blocks)
-
-#         self.unshared = nn.Linear(dim_out, style_dim)
-
-#     def forward(self, x):
-#         # print('$$$$$$$$$$$$$$$$')
-#         # print(x.shape)
-#         # x: (batch, 296, 80)
-#         h = self.shared(x)
-#         h = h.view(h.size(0), -1)
-#         s = self.unshared(h)
+        return x
     
-#         return s
+class Style_EnergyClassifier(nn.Module):
+    def __init__(
+        self,
+        n_vocab,
+        out_channels,
+        hidden_channels,
+        filter_channels,
+        n_heads,
+        n_layers,
+        kernel_size,
+        p_dropout,
+        pitch_class=12
+    ):
+        super().__init__()
 
-# class SpeakerEncoder_CNN(torch.nn.Module):
-#     def __init__(self, mel_n_channels=80, in_dim=256, out_dim=256):
-#         super(SpeakerEncoder_CNN, self).__init__()
-#         self.layers = 
-#     def forward(self, y):
-#         return
+        self.n_vocab = n_vocab
+        self.out_channels = out_channels
+        self.hidden_channels = hidden_channels
+        self.filter_channels = filter_channels
+        self.n_heads = n_heads
+        self.n_layers = n_layers
+        self.kernel_size = kernel_size
+        self.p_dropout = p_dropout
+        self.pitch_class = pitch_class
+
+        self.classifier = nn.Sequential(
+            nn.Linear(self.hidden_channels, self.hidden_channels//2),
+            nn.Linear(self.hidden_channels//2, self.hidden_channels),
+            )            
+        self.avg_pool = nn.AdaptiveAvgPool1d(1)  # Global Average Pooling
+        # self.proj = nn.Conv1d(self.hidden_channels, 1, 1)
+
+    def forward(self, feature_embedding):
+        # (40, 192, 296)
+        x = feature_embedding.transpose(1, 2) # (b, mel, hidden=192)
+        x = self.classifier(x) # (b, mel, hidden)
+        # # (1)
+        # x = self.proj(x)
+        # x = x.squeeze()
+        
+        # (2)
+        x = self.avg_pool(x).squeeze(-1) # (b, mel)
+
+        return x    
+
+
+class LinearNorm(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        bias=True, 
+        spectral_norm=False,
+    ):
+        super(LinearNorm, self).__init__()
+        self.fc = nn.Linear(in_channels, out_channels, bias)
+        
+        if spectral_norm:
+            self.fc = nn.utils.spectral_norm(self.fc)
+
+    def forward(self, input):
+        out = self.fc(input)
+        return out
+
+class Mish(nn.Module):
+    def __init__(self):
+        super(Mish, self).__init__()
+    def forward(self, x):
+        return x * torch.tanh(F.softplus(x))
+
+class ConvNorm(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size=1,
+        stride=1,
+        padding=None,
+        dilation=1,
+        bias=True, 
+        spectral_norm=False,
+    ):
+        super(ConvNorm, self).__init__()
+
+        if padding is None:
+            assert(kernel_size % 2 == 1)
+            padding = int(dilation * (kernel_size - 1) / 2)
+
+        self.conv = torch.nn.Conv1d(in_channels,
+                                    out_channels,
+                                    kernel_size=kernel_size,
+                                    stride=stride,
+                                    padding=padding,
+                                    dilation=dilation,
+                                    bias=bias)
+        
+        if spectral_norm:
+            self.conv = nn.utils.spectral_norm(self.conv)
+
+    def forward(self, input):
+        out = self.conv(input)
+        return out
+    
+class Conv1dGLU(nn.Module):
+    '''
+    Conv1d + GLU(Gated Linear Unit) with residual connection.
+    For GLU refer to https://arxiv.org/abs/1612.08083 paper.
+    '''
+    def __init__(self, in_channels, out_channels, kernel_size, dropout):
+        super(Conv1dGLU, self).__init__()
+        self.out_channels = out_channels
+        self.conv1 = ConvNorm(in_channels, 2*out_channels, kernel_size=kernel_size)
+        self.dropout = nn.Dropout(dropout)
+            
+    def forward(self, x):
+        residual = x
+        x = self.conv1(x)
+        x1, x2 = torch.split(x, split_size_or_sections=self.out_channels, dim=1)
+        x = x1 * torch.sigmoid(x2)
+        x = residual + self.dropout(x)
+        return x
+
+class MelStyleEncoder(nn.Module):
+    ''' MelStyleEncoder '''
+    def __init__(
+        self, 
+        mel_n_channels=80, 
+        style_hidden_size=128, 
+        model_embedding_size=256, 
+        style_kernel_size=5, 
+        style_head=2, 
+        dropout=0.1
+    ):
+        
+        super(MelStyleEncoder, self).__init__()
+        self.in_dim = mel_n_channels 
+        self.hidden_dim = style_hidden_size
+        self.out_dim = model_embedding_size
+        self.kernel_size = style_kernel_size
+        self.n_head = style_head
+        self.dropout = dropout
+
+        self.spectral = nn.Sequential(
+            LinearNorm(self.in_dim, self.hidden_dim),
+            Mish(),
+            nn.Dropout(self.dropout),
+            LinearNorm(self.hidden_dim, self.hidden_dim),
+            Mish(),
+            nn.Dropout(self.dropout)
+        )
+
+        self.temporal = nn.Sequential(
+            Conv1dGLU(self.hidden_dim, self.hidden_dim, self.kernel_size, self.dropout),
+            Conv1dGLU(self.hidden_dim, self.hidden_dim, self.kernel_size, self.dropout),
+        )
+
+        self.slf_attn = attentions.MultiHeadAttention_MS(self.n_head, self.hidden_dim, 
+                                self.hidden_dim//self.n_head, self.hidden_dim//self.n_head, self.dropout) 
+
+        # bottleneck ###############
+
+        #############################
+
+        self.fc = LinearNorm(self.hidden_dim, self.out_dim)
+
+    def temporal_avg_pool(self, x, mask=None):
+        if mask is None:
+            out = torch.mean(x, dim=1)
+        else:
+            len_ = (~mask).sum(dim=1).unsqueeze(1)
+            x = x.masked_fill(mask.unsqueeze(-1), 0)
+            x = x.sum(dim=1)
+            out = torch.div(x, len_)
+        return out
+
+    def forward(self, x, mask=None):
+        max_len = x.shape[1]
+        slf_attn_mask = mask.unsqueeze(1).expand(-1, max_len, -1) if mask is not None else None
+        
+        # spectral
+        x = self.spectral(x)
+        # temporal
+        x = x.transpose(1,2)
+        x = self.temporal(x)
+        x = x.transpose(1,2)
+        # self-attention
+        if mask is not None:
+            x = x.masked_fill(mask.unsqueeze(-1), 0)
+        x, _ = self.slf_attn(x, mask=slf_attn_mask)
+        # fc
+        x = self.fc(x)
+        # temoral average pooling
+        w = self.temporal_avg_pool(x, mask=mask)
+
+        return w
 
 
 class SpeakerEncoder(torch.nn.Module):
     '''
     lstm
     '''
-    def __init__(self, mel_n_channels=80, model_num_layers=3, model_hidden_size=256, model_embedding_size=256):
+    def __init__(
+        self, 
+        mel_n_channels=80, 
+        model_num_layers=3, 
+        model_hidden_size=256, 
+        model_embedding_size=256
+    ):
         super(SpeakerEncoder, self).__init__()
         self.lstm = nn.LSTM(mel_n_channels, model_hidden_size, model_num_layers, batch_first=True)
         self.linear = nn.Linear(model_hidden_size, model_embedding_size)
@@ -1242,6 +1361,28 @@ class SynthesizerTrn(nn.Module):
             p_dropout,
         )        
 
+        self.style_pitchclassifier = Style_PitchClassifier(
+            n_vocab,
+            inter_channels,
+            hidden_channels,
+            filter_channels,
+            n_heads,
+            n_layers,
+            kernel_size,
+            p_dropout,
+        )        
+
+        self.style_energyclassifier = Style_EnergyClassifier(
+            n_vocab,
+            inter_channels,
+            hidden_channels,
+            filter_channels,
+            n_heads,
+            n_layers,
+            kernel_size,
+            p_dropout,
+        )    
+
         self.phonemes_predictor = PhonemesPredictor(
             n_vocab,
             inter_channels,
@@ -1265,11 +1406,16 @@ class SynthesizerTrn(nn.Module):
 
         
         if use_vc:
-            self.enc_spk = SpeakerEncoder(
-                model_hidden_size=gin_channels,
+            # self.enc_spk = SpeakerEncoder(
+            #     model_hidden_size=gin_channels,
+            #     model_embedding_size=gin_channels
+            # )
+        
+            self.enc_spk = MelStyleEncoder(
                 model_embedding_size=gin_channels
-            )
+            )            
             # self.enc_spk = SpeakerEncoder_CNN()
+
 
 
     def forward(
@@ -1289,16 +1435,19 @@ class SynthesizerTrn(nn.Module):
         sid=None
     ):
         
-        x, x_mask = self.enc_p(phone, score, score_dur, energy, slurs, phone_lengths)
-
+        x, x_mask, score_emb, energy_emb = self.enc_p(phone, score, score_dur, energy, slurs, phone_lengths)
+        # pdb.set_trace()
 
         # if self.n_speakers > 0:
         #     g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
         # else:
         #     g = None
         if self.use_vc:
+            # print(mel.shape)
             g = self.enc_spk(mel.transpose(1,2)).unsqueeze(-1)
             # g = self.enc_spk(mel)
+        else:
+            g = None
 
 
         # duration
@@ -1306,9 +1455,21 @@ class SynthesizerTrn(nn.Module):
         gt_logw = w * x_mask
         pred_logw = self.dp(x, x_mask, score_dur, g=g)
 
+        # lr
         x_frame, x_lengths = self.lr(x, phone_dur, phone_lengths)
 
+        score_emb = score_emb.transpose(1,2)
+        score_frame, _ = self.lr(score_emb, phone_dur, phone_lengths)
+        score_frame = score_frame.to(x_frame.device)
+        # x_frame = x_frame + score_frame
+
+        energy_emb = energy_emb.transpose(1,2)
+        energy_frame, _ = self.lr(energy_emb, phone_dur, phone_lengths)
+        energy_frame = energy_frame.to(x_frame.device)
+        # x_frame = x_frame + energy_frame
+
         x_frame = x_frame.to(x.device)
+
         x_mask = torch.unsqueeze(
             commons.sequence_mask(x_lengths, x_frame.size(2)), 1
         ).to(
@@ -1330,32 +1491,29 @@ class SynthesizerTrn(nn.Module):
         x_frame = x_frame + pe # (mel, 290)
         
         # pitch predictor (+dann)
-        pred_pitch, pitch_embedding = self.pitch_net(x_frame, x_mask) # ( 40, 1, 296) (40, 192, 296)
+        pred_pitch, pitch_embedding = self.pitch_net(x_frame+score_frame, x_mask) # ( 40, 1, 296) (40, 192, 296)
         lf0 = torch.unsqueeze(pred_pitch, -1) # (40, 1, 296, 1)
         gt_lf0 = pitch.to(torch.float32) 
         pred_lf0 = lf0.squeeze() # (40, 296)
-
-        # f0_reverse = revgrad(pitch_embedding, self.alpha)
-        # logit_f0_noteg = self.pitch_energyclassifier(f0_reverse)
-        
+        # classifier
+        f0_reverse = revgrad(pitch_embedding, self.alpha)
+        logit_f0_noteg = self.pitch_energyclassifier(f0_reverse)
         x_pitch_frame = self.pitch_frame_prior_net(x_frame, pitch_embedding, x_mask) # (296, 192)
         x_pitch_frame = x_pitch_frame.transpose(1, 2) # (192, 290)
 
-        # # energy predictor (+dann)
-        # pred_energy, energy_embedding = self.energy_net(x_frame, x_mask)
-        # leg = torch.unsqueeze(pred_energy, -1)
-        # gt_leg = energy_real.to(torch.float32)
-        # pred_leg = leg.squeeze()
-        
-        # eg_reverse = revgrad(energy_embedding, self.alpha)
-        # logit_eg_notf0 = self.energy_pitchclassifier(eg_reverse)
-
-
+        # energy predictor (+dann)
+        pred_energy, energy_embedding = self.energy_net(x_frame+energy_frame, x_mask)
+        leg = torch.unsqueeze(pred_energy, -1)
+        gt_leg = energy_real.to(torch.float32)
+        pred_leg = leg.squeeze()
+        # classifier
+        eg_reverse = revgrad(energy_embedding, self.alpha)
+        logit_eg_notf0 = self.energy_pitchclassifier(eg_reverse)
         x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
         x_energy_frame = x_energy_frame.transpose(1, 2)
-
+        
         x_frame = x_frame + x_pitch_frame + x_energy_frame
-
+        # x_frame = x_frame + torch.cat(x_pitch_frame, x_energy_frame)
 
         m_p, logs_p = self.project(x_frame, x_mask)
 
@@ -1371,8 +1529,30 @@ class SynthesizerTrn(nn.Module):
         z_slice, ids_slice = commons.rand_slice_segments(
             z, y_lengths, self.segment_size
         )
-        # generator (vocoder)
-        o = self.dec(z_slice, g=g)
+
+        # # generator (vocoder)
+        o = self.dec(z_slice, g=g) # y_hat
+   
+        if self.use_vc:
+            o_hat_mel = mel_spectrogram_torch(
+                o.squeeze(1),
+                1024,
+                80,
+                24000,
+                256,
+                1024,
+                0.0,
+                8000,
+            )
+            o_mel = commons.slice_segments(
+                mel, ids_slice, 8192 // 256
+            )
+            # pdb.set_trace()
+            o_hat_mel_g = self.enc_spk(o_hat_mel.transpose(1,2)).unsqueeze(-1)
+            o_mel_g = self.enc_spk(o_mel.transpose(1,2)).unsqueeze(-1)
+            style_loss = F.l1_loss(o_hat_mel_g, o_mel_g) # * hps.train.c_mel
+        else:
+            style_loss = None
         return (
             o,
             ids_slice,
@@ -1383,14 +1563,14 @@ class SynthesizerTrn(nn.Module):
             pred_logw,
             gt_lf0,
             pred_lf0,
-
             pitch_embedding,
-            # logit_f0_noteg,
+            logit_f0_noteg,
             gt_leg,
             pred_leg,
             energy_embedding,
-            # logit_eg_notf0,
+            logit_eg_notf0,
             ctc_loss,
+            style_loss,
         )
 
     def infer(
@@ -1411,7 +1591,7 @@ class SynthesizerTrn(nn.Module):
     ):
         # x, x_mask = self.enc_p(phone, score, score_dur, slurs, phone_lengths,  energy)
 
-        x, x_mask = self.enc_p(phone, score, score_dur, energy, slurs, phone_lengths)
+        x, x_mask, score_emb, energy_emb = self.enc_p(phone, score, score_dur, energy, slurs, phone_lengths)
 
         # if self.n_speakers > 0:
         #     g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
@@ -1419,13 +1599,32 @@ class SynthesizerTrn(nn.Module):
         #     g = None
         if self.use_vc:
             g = self.enc_spk(mel.transpose(1,2)).unsqueeze(-1)  
-
+        else:
+            g = None
         # duration
         w = phone_dur.unsqueeze(1)
         gt_logw = w * x_mask
         pred_logw = self.dp(x, x_mask, score_dur, g=g)
         # pred_logw_ = (pred_logw * x_mask).type(torch.LongTensor).to(x.device).squeeze(1)
+
+        # lr
+        # score_emb = score_emb.transpose(1,2).to(x.device)
+        # energy_emb = energy_emb.transpose(1,2).to(x.device)
+        # x = x + score_emb + energy_emb        
+
         x_frame, x_lengths = self.lr(x, phone_dur, phone_lengths)
+
+        score_emb = score_emb.transpose(1,2)
+        score_frame, _ = self.lr(score_emb, phone_dur, phone_lengths)
+        score_frame = score_frame.to(x_frame.device)
+
+        energy_emb = energy_emb.transpose(1,2)
+        energy_frame, _ = self.lr(energy_emb, phone_dur, phone_lengths)
+        energy_frame = energy_frame.to(x_frame.device)
+        
+        # x_frame = x_frame + score_frame + energy_frame
+
+        x_frame = x_frame.to(x.device)  
 
         x_mask = torch.unsqueeze(
             commons.sequence_mask(x_lengths, x_frame.size(2)), 1
@@ -1446,30 +1645,34 @@ class SynthesizerTrn(nn.Module):
 
         # pitch
         pred_pitch, pitch_embedding = self.pitch_net(x_frame, x_mask) # ( 40, 1, 296) (40, 192, 296)
+        pitch_embedding += score_frame
         lf0 = torch.unsqueeze(pred_pitch, -1)
         gt_lf0 = pitch.to(torch.float32) # (40, 296)
         pred_lf0 = lf0.squeeze() # (40, 296)
-
-        # f0_reverse = revgrad(pitch_embedding, self.alpha)
-        # logit_f0_noteg = self.pitch_energyclassifier(f0_reverse)
+        
+        # classifier
+        f0_reverse = revgrad(pitch_embedding, self.alpha)
+        logit_f0_noteg = self.pitch_energyclassifier(f0_reverse)
 
         x_pitch_frame = self.pitch_frame_prior_net(x_frame, pitch_embedding, x_mask)
         x_pitch_frame = x_pitch_frame.transpose(1, 2)
 
         # energy
         pred_energy, energy_embedding = self.energy_net(x_frame, x_mask)
+        energy_embedding += energy_frame
+
         leg = torch.unsqueeze(pred_energy, -1)
         gt_leg = energy_real.to(torch.float32)
         pred_leg = leg.squeeze()
 
-        # energy_reverse = revgrad(energy_embedding, self.alpha)
-        # logit_eg_notf0 = self.energy_pitchclassifier(energy_reverse)
+        # classifier
+        energy_reverse = revgrad(energy_embedding, self.alpha)
+        logit_eg_notf0 = self.energy_pitchclassifier(energy_reverse)
 
         x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
         x_energy_frame = x_energy_frame.transpose(1, 2)
         
         x_frame = x_frame + x_pitch_frame + x_energy_frame
-
 
         m_p, logs_p = self.project(x_frame, x_mask)
 
@@ -1486,8 +1689,29 @@ class SynthesizerTrn(nn.Module):
         z_slice, ids_slice = commons.rand_slice_segments(
             z, y_lengths, self.segment_size
         )
+        # # generator (vocoder)
         o = self.dec(z_slice, g=g)
-
+        
+        if self.use_vc:
+            o_hat_mel = mel_spectrogram_torch(
+                o.squeeze(1),
+                1024,
+                80,
+                24000,
+                256,
+                1024,
+                0.0,
+                8000,
+            )
+            o_mel = commons.slice_segments(
+                mel, ids_slice, 8192 // 256
+            )
+            # pdb.set_trace()
+            o_hat_mel_g = self.enc_spk(o_hat_mel.transpose(1,2)).unsqueeze(-1)
+            o_mel_g = self.enc_spk(o_mel.transpose(1,2)).unsqueeze(-1)
+            style_loss = F.l1_loss(o_hat_mel_g, o_mel_g) # * hps.train.c_mel
+        else:
+            style_loss = None
         
         return (
             o,
@@ -1501,12 +1725,13 @@ class SynthesizerTrn(nn.Module):
             pred_lf0,
 
             pitch_embedding,
-            # logit_f0_noteg,
+            logit_f0_noteg,
             gt_leg,
             pred_leg,
             energy_embedding,
-            # logit_eg_notf0,
+            logit_eg_notf0,
             ctc_loss,
+            style_loss
         )
 
     def voice_conversion(self, y, y_lengths):
@@ -1659,28 +1884,43 @@ class Synthesizer(nn.Module):
         # if n_speakers > 1:
         #     self.emb_g = nn.Embedding(n_speakers, gin_channels)     
         if use_vc:
-            self.enc_spk = SpeakerEncoder(
-                model_hidden_size=gin_channels,
+            # self.enc_spk = SpeakerEncoder(
+            #     model_hidden_size=gin_channels,
+            #     model_embedding_size=gin_channels
+            # ) 
+            self.enc_spk = MelStyleEncoder(
                 model_embedding_size=gin_channels
-            ) 
+            )                        
             # self.enc_spk = SpeakerEncoder_CNN()           
 
     def infer(
         self, phone, phone_lengths, score, score_dur, slurs, energy, mel, max_len=None
     ):
-        x, x_mask = self.enc_p(phone, score, score_dur, energy, slurs, phone_lengths)
-                    # self, phone, score, score_dur, energy, slurs, lengths
-        # if self.n_speakers > 0:
-        #     g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
-        # else:
-        #     g = None
+        # x, x_mask = self.enc_p(phone, score, score_dur, energy, slurs, phone_lengths)
+        x, x_mask, score_emb, energy_emb = self.enc_p(phone, score, score_dur, energy, slurs, phone_lengths)
+
         if self.use_vc:
-            g = self.enc_spk(mel.transpose(1,2)).unsqueeze(-1)            
+            g = self.enc_spk(mel.transpose(1,2)).unsqueeze(-1)     
+        else:
+            g = None
 
         logw = self.dp(x, x_mask, score_dur, g=g)
         # logw = torch.mul(logw.squeeze(1), score_dur).unsqueeze(1)
         w = (logw * x_mask).type(torch.LongTensor).to(x.device).squeeze(1)
         x_frame, x_lengths = self.lr(x, w, phone_lengths)
+
+        # score emb
+        score_emb = score_emb.transpose(1,2)
+        score_frame, _ = self.lr(score_emb, w, phone_lengths)
+        score_frame = score_frame.to(x_frame.device)
+        # x_frame = x_frame + score_frame
+
+        # energy emb
+        energy_emb = energy_emb.transpose(1,2)
+        energy_frame, _ = self.lr(energy_emb, w, phone_lengths)
+        energy_frame = energy_frame.to(x_frame.device)
+        # x_frame = x_frame + energy_frame
+
         x_frame = x_frame.to(x.device)
         x_mask = torch.unsqueeze(
             commons.sequence_mask(x_lengths, x_frame.size(2)), 1
@@ -1698,17 +1938,16 @@ class Synthesizer(nn.Module):
         pe[:, :, 1::2] = torch.cos(position * div_term)
         pe = pe.transpose(1, 2).to(x_frame.device)
         x_frame = x_frame + pe
-        pred_pitch, pitch_embedding = self.pitch_net(x_frame, x_mask)
 
+        pred_pitch, pitch_embedding = self.pitch_net(x_frame+score_frame, x_mask)
         x_pitch_frame = self.pitch_frame_prior_net(x_frame, pitch_embedding, x_mask)
         x_pitch_frame = x_pitch_frame.transpose(1, 2)
 
-        # pred_energy, energy_embedding = self.energy_net(x_frame, x_mask)
+        pred_energy, energy_embedding = self.energy_net(x_frame+energy_frame, x_mask)
+        x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
+        x_energy_frame = x_energy_frame.transpose(1, 2)
 
-        # x_energy_frame = self.energy_frame_prior_net(x_frame, energy_embedding, x_mask)
-        # x_energy_frame = x_energy_frame.transpose(1, 2)
-
-        x_frame = x_frame + x_pitch_frame # + x_energy_frame
+        x_frame = x_frame + x_pitch_frame + x_energy_frame
 
         m_p, logs_p = self.project(x_frame, x_mask)
 

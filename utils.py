@@ -8,6 +8,7 @@ import subprocess
 import numpy as np
 from scipy.io.wavfile import read
 import torch
+import wandb
 
 MATPLOTLIB_FLAG = False
 
@@ -56,15 +57,32 @@ def save_checkpoint(model, optimizer, learning_rate, iteration, checkpoint_path)
               'learning_rate': learning_rate}, checkpoint_path)
 
 
-def summarize(writer, global_step, scalars={}, histograms={}, images={}, audios={}, audio_sampling_rate=22050):
+# def summarize(writer, global_step, scalars={}, histograms={}, images={}, audios={}, audio_sampling_rate=22050):
+#   for k, v in scalars.items():
+#     writer.add_scalar(k, v, global_step)
+#   for k, v in histograms.items():
+#     writer.add_histogram(k, v, global_step)
+#   for k, v in images.items():
+#     writer.add_image(k, v, global_step, dataformats='HWC')
+#   for k, v in audios.items():
+#     writer.add_audio(k, v, global_step, audio_sampling_rate)
+
+def wandb_log(global_step, scalars={}, histograms={}, images={}, audios={}, audio_sampling_rate=22050):
   for k, v in scalars.items():
-    writer.add_scalar(k, v, global_step)
+    wandb.log({k: v}, step=global_step)
+  wandb.log(images, step=global_step)
   for k, v in histograms.items():
-    writer.add_histogram(k, v, global_step)
+    wandb.log({k: wandb.Histogram(v)})
+    # wandb.run.summary.update({k: wandb.Histogram(np_histogram=np.histogram(v))})
   for k, v in images.items():
-    writer.add_image(k, v, global_step, dataformats='HWC')
+    wandb.log({k: [wandb.Image(v, caption=k)]})
   for k, v in audios.items():
-    writer.add_audio(k, v, global_step, audio_sampling_rate)
+    wandb.log({ k: wandb.Audio(v.cpu(), caption=k, sample_rate=audio_sampling_rate)})      
+
+
+# example_images.append(wandb.Image(
+#                 data[0], caption="Pred: {} Truth: {}".format(pred[0].item(), target[0])))
+# wandb.log({"Examples": example_images})
 
 
 def latest_checkpoint_path(dir_path, regex="G_*.pth"):

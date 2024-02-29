@@ -16,4 +16,11 @@ __pycache__/
 singing_out*/
 VIsinger_data*
 venv/
+*.pickle
+paper/
+output/
 core
+data/
+svs/
+*.wav
+wandb/

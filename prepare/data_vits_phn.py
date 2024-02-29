@@ -111,16 +111,6 @@ class SingInput(object):
         energy_id = infos[10].split(" ")
         energy_id = self.notes_to_int(energy_id)
 
-        logging.info("----------------------------")
-        logging.info("file {}".format(file))
-        logging.info("lyrics {}".format(hanz))
-        logging.info("phn {}".format(phon))
-        # logging.info("note_ids {}".format(note_ids))
-        # logging.info("note {}".format(note))
-        # logging.info("note_dur {}".format(note_dur))
-        # logging.info("phon_dur {}".format(phon_dur))
-        # logging.info("dur_id {}".format(dur_id))
-        # logging.info("energy_id {}".format(energy_id))
 
 
         labels_ids = label_to_ids(phon)
@@ -139,6 +129,17 @@ class SingInput(object):
         # print("phon_dur", phon_dur)
         # print("labels_slr", labels_slr)
         # file, txt, phon, note_id, note, note_dur, phon_dur, dur_id, phon_slr
+        # logging.info("----------------------------")
+        # logging.info("file {}".format(file))
+        # logging.info("lyrics {}".format(hanz))
+        # logging.info("phn {}".format(phon))
+        # logging.info("note_ids {}".format(note_ids))
+        # logging.info("note {}".format(note))
+        # logging.info("note_dur {}".format(note_dur))
+        # logging.info("phon_dur {}".format(phon_dur))
+        # logging.info("dur_id {}".format(dur_id))
+        # logging.info("labels_slr {}".format(labels_slr))
+        # logging.info("energy_id {}".format(energy_id))
         return (
             file,
             labels_ids, # phon
@@ -151,6 +152,27 @@ class SingInput(object):
             labels_slr,
             labels_uvs,
         )
+
+    def parseInput_infer(self, singinfo: str):
+        infos = singinfo.split("|")
+        # file, txt, phon, note_id, note, note_dur, phon_dur, dur_id, phon_slr
+        file = infos[0]
+        hanz = infos[1]
+        phon = infos[2].split(" ")
+        labels_ids = label_to_ids(phon) ###
+
+        note_ids = infos[3].split(" ") # pitch id
+        
+        phon_dur = infos[4].split(" ") # dur
+        phon_dur = [eval(i) for i in phon_dur]
+        phon_dur = dur_to_frame(phon_dur, self.fs, self.hop)
+
+        energy_id = infos[5].split(" ")
+        energy_id = self.notes_to_int(energy_id)
+
+        labels_slr = [0 for _ in range(len(phon))]
+
+        return (file, labels_ids, note_ids, phon_dur, labels_slr, energy_id)
 
     def parseSong(self, singinfo: str):
         infos = singinfo.split("|")

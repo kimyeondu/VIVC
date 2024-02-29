@@ -24,6 +24,17 @@ from models import (
 from losses import generator_loss, discriminator_loss, feature_loss, kl_loss
 from mel_processing import mel_spectrogram_torch, spec_to_mel_torch
 from prepare.phone_map import get_vocab_size
+import wandb
+import pickle
+
+wandb.init(project="e2e", reinit=True)
+wandb.run.name = 'lr_each'
+
+# with open('api.pickle', 'rb') as fr:
+#     api_dict = pickle.load(fr)
+
+os.environ["WANDB_API_KEY"] = "087a4a18c9cce3c3064bbd1114eb654c77b6c4ff" #api_dict["WANDB_API_KEY"]
+os.environ["WANDB_MODE"] = "dryrun"
 
 torch.backends.cudnn.benchmark = True
 global_step = 0
@@ -53,6 +64,8 @@ def main():
 
 def run(rank, n_gpus, hps):
     global global_step
+    wandb.config.update(hps)
+
     if rank == 0:
         logger = utils.get_logger(hps.model_dir)
         logger.info(hps)
@@ -124,6 +137,9 @@ def run(rank, n_gpus, hps):
     # net_d = DDP(net_d, device_ids=[rank], find_unused_parameters=True)
     net_g = DDP(net_g, device_ids=[rank], find_unused_parameters=True)
     net_d = DDP(net_d, device_ids=[rank], find_unused_parameters=True)
+
+    wandb.watch(net_g)
+    wandb.watch(net_d)
 
     try:
         _, _, _, epoch_str = utils.load_checkpoint(
@@ -251,15 +267,14 @@ def train_and_evaluate(
                 pred_logw,
                 gt_lf0,
                 pred_lf0,
-
                 pitch_embedding,
-                # logit_f0_noteg,
+                logit_f0_noteg,
                 gt_leg,
                 pred_leg,
                 energy_embedding,
-
-                # logit_eg_notf0,
+                logit_eg_notf0,
                 ctc_loss,
+                style_loss,
             ) = net_g(
                 phone,
                 phone_lengths,
@@ -323,10 +338,12 @@ def train_and_evaluate(
 
                 loss_dur = mse_loss(gt_logw, pred_logw)
                 loss_pitch = mse_loss(gt_lf0, pred_lf0)
-                # loss_pitch_noteg = mse_loss(gt_leg, logit_f0_noteg)
+                loss_pitch_noteg = mse_loss(gt_leg, logit_f0_noteg)
+                # loss_pitch_noteg = ce_loss(gt_leg, logit_f0_noteg)
 
                 loss_energy = mse_loss(gt_leg, pred_leg)
-                # loss_energy_notf0 = mse_loss(gt_lf0, logit_eg_notf0)
+                loss_energy_notf0 = mse_loss(gt_lf0, logit_eg_notf0)
+                # loss_energy_notf0 = ce_loss(gt_lf0, logit_eg_notf0)
 
                 pitch_emb = pitch_embedding - pitch_embedding.mean(dim=0)
                 pitch_emb_T = pitch_emb.transpose(2, 1)
@@ -348,11 +365,12 @@ def train_and_evaluate(
                     + loss_kl
                     + loss_dur
                     + loss_pitch
-                    # + (loss_pitch_noteg*0.05)
+                    + (loss_pitch_noteg*0.1)
                     + loss_energy
-                    # + (loss_energy_notf0*0.05)
-                    + ctc_loss
+                    + (loss_energy_notf0*0.1)
                     + loss_corr # *0.01
+                    + ctc_loss
+                    + style_loss
                 )
         optim_g.zero_grad()
         scaler.scale(loss_gen_all).backward()
@@ -376,11 +394,12 @@ def train_and_evaluate(
                     loss_mel,
                     loss_dur,
                     loss_pitch,
-                    # loss_pitch_noteg,
+                    loss_pitch_noteg,
                     loss_energy,
-                    # loss_energy_notf0,
-                    ctc_loss,
+                    loss_energy_notf0,
                     loss_corr,
+                    ctc_loss,
+                    style_loss,
                 ]
                 logger.info(
                     "Train Epoch: {} [{:.0f}%]".format(
@@ -394,8 +413,10 @@ def train_and_evaluate(
                     loss_kl = 5
                 if loss_dur > 100:
                     loss_dur = 100
-                # if loss_pitch > 100:
-                #     loss_pitch = 100
+                if loss_pitch > 100:
+                    loss_pitch = 100
+                if loss_energy > 100:
+                    loss_pitch = 100
 
                 logger.info([global_step, lr])
                 logger.info(
@@ -403,9 +424,9 @@ def train_and_evaluate(
                 )
                 logger.info(
                     f"loss_mel={loss_mel:.3f}, loss_kl={loss_kl:.3f}, loss_dur={loss_dur:.3f}, \
-                    loss_pitch={loss_pitch:.3f}, loss_energy={loss_energy:.3f},\
-                    ctc_loss={ctc_loss:.3f}, loss_corr={loss_corr:.3f}"
-                    #  loss_pitch_noteg={loss_pitch_noteg:.3f}, loss_energy_notf0={loss_energy_notf0:.3f}, \
+                    loss_pitch={loss_pitch:.3f}, loss_energy={loss_energy:.3f}, loss_corr={loss_corr:.3f}\
+                    ctc_loss={ctc_loss:.3f}, style_loss={style_loss:.3f}, \
+                     loss_pitch_noteg={loss_pitch_noteg:.3f}, loss_energy_notf0={loss_energy_notf0:.3f}"
                 )
 
                 scalar_dict = {
@@ -417,41 +438,53 @@ def train_and_evaluate(
                 }
                 scalar_dict.update(
                     {
+                        "loss/gen": losses_gen,
+                        "loss/disc_r": losses_disc_r,
+                        "loss/disc_g": losses_disc_g,
                         "loss/g/fm": loss_fm,
                         "loss/g/mel": loss_mel,
                         "loss/g/kl": loss_kl,
                         "loss/g/dur": loss_dur,
                         "loss/g/pitch": loss_pitch,
-                        # "loss/g/pitch_noteg": loss_pitch_noteg,
+                        "loss/g/pitch_noteg": loss_pitch_noteg,
                         "loss/g/energy": loss_energy,
-                        # "loss/g/energy_notf0": loss_energy_notf0,
+                        "loss/g/energy_notf0": loss_energy_notf0,
+                        "loss/g/corr": loss_corr,
                         "loss/g/ctc": ctc_loss,
-                        "loss/g/corr": loss_corr
+                        "loss/g/style": style_loss
                     }
                 )
 
-                scalar_dict.update(
-                    {"loss/g/{}".format(i): v for i, v in enumerate(losses_gen)}
-                )
-                scalar_dict.update(
-                    {"loss/d_r/{}".format(i): v for i, v in enumerate(losses_disc_r)}
-                )
-                scalar_dict.update(
-                    {"loss/d_g/{}".format(i): v for i, v in enumerate(losses_disc_g)}
-                )
+                # scalar_dict.update(
+                #     {"loss/g/{}".format(i): v for i, v in enumerate(losses_gen)}
+                # )
+                # scalar_dict.update(
+                #     {"loss/d_r/{}".format(i): v for i, v in enumerate(losses_disc_r)}
+                # )
+                # scalar_dict.update(
+                #     {"loss/d_g/{}".format(i): v for i, v in enumerate(losses_disc_g)}
+                # )
                 image_dict = {
-                    "slice/mel_org": utils.plot_spectrogram_to_numpy(
+                    "image/slice_mel_org": utils.plot_spectrogram_to_numpy(
                         y_mel[0].data.cpu().numpy()
                     ),
-                    "slice/mel_gen": utils.plot_spectrogram_to_numpy(
+                    "image/slice_mel_gen": utils.plot_spectrogram_to_numpy(
                         y_hat_mel[0].data.cpu().numpy()
                     ),
-                    "all/mel": utils.plot_spectrogram_to_numpy(
+                    # "image/gen_mel": utils.plot_spectrogram_to_numpy(
+                    #     y_hat_mel[0].cpu().numpy()
+                    # ),                    
+                    "image/all_mel": utils.plot_spectrogram_to_numpy(
                         mel[0].data.cpu().numpy()
                     ),
                 }
-                utils.summarize(
-                    writer=writer,
+                # utils.summarize(
+                #     writer=writer,
+                #     global_step=global_step,
+                #     images=image_dict,
+                #     scalars=scalar_dict,
+                # )
+                utils.wandb_log(
                     global_step=global_step,
                     images=image_dict,
                     scalars=scalar_dict,
@@ -515,6 +548,7 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
     loss_energy_notf0_avg = 0
     ctc_loss_avg = 0
     loss_corr_avg = 0
+    style_loss_avg = 0
     loss_kl_avg = 0
     loss_gen_all_avg = 0
     loss_disc_all_avg = 0
@@ -570,15 +604,14 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
                 pred_logw,
                 gt_lf0,
                 pred_lf0,
-
                 pitch_embedding,
-                # logit_f0_noteg,
+                logit_f0_noteg,
                 gt_leg,
                 pred_leg,
                 energy_embedding,
-
-                # logit_eg_notf0,
+                logit_eg_notf0,
                 ctc_loss,
+                style_loss,
             ) = generator.module.infer(
                 phone,
                 phone_lengths,
@@ -636,11 +669,11 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
 
                     loss_dur = mse_loss(gt_logw, pred_logw)
                     loss_pitch = mse_loss(gt_lf0, pred_lf0)
-                    # loss_pitch_noteg = mse_loss(gt_leg, logit_f0_noteg)
+                    loss_pitch_noteg = mse_loss(gt_leg, logit_f0_noteg)
 
 
                     loss_energy = mse_loss(gt_leg, pred_leg)
-                    # loss_energy_notf0 = mse_loss(gt_lf0, logit_eg_notf0)
+                    loss_energy_notf0 = mse_loss(gt_lf0, logit_eg_notf0)
 
                     pitch_emb = pitch_embedding - pitch_embedding.mean(dim=0)
                     pitch_emb_T = pitch_emb.transpose(2, 1)
@@ -662,11 +695,12 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
                         + loss_kl
                         + loss_dur
                         + loss_pitch
-                        # + (loss_pitch_noteg *0.05)
+                        + (loss_pitch_noteg *0.1)
                         + loss_energy
-                        # + (loss_energy_notf0*0.05)
-                        + ctc_loss
+                        + (loss_energy_notf0*0.1)
                         + loss_corr #* 0.01
+                        + ctc_loss
+                        + style_loss
                     )
 
                     loss_disc_avg += loss_disc
@@ -675,11 +709,12 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
                     loss_mel_avg += loss_mel
                     loss_dur_avg += loss_dur
                     loss_pitch_avg += loss_pitch
-                    # loss_pitch_noteg_avg += loss_pitch_noteg
+                    loss_pitch_noteg_avg += loss_pitch_noteg
                     loss_energy_avg += loss_energy
-                    # loss_energy_notf0_avg += loss_energy_notf0
-                    ctc_loss_avg += ctc_loss
+                    loss_energy_notf0_avg += loss_energy_notf0
                     loss_corr_avg += loss_corr
+                    ctc_loss_avg += ctc_loss
+                    style_loss_avg += style_loss
                     loss_kl_avg += loss_kl
                     loss_gen_all_avg += loss_gen_all
                     loss_disc_all_avg += loss_disc_all
@@ -697,11 +732,12 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
         loss_mel_avg = loss_mel_avg / len(eval_loader)
         loss_dur_avg = loss_dur_avg / len(eval_loader)
         loss_pitch_avg = loss_pitch_avg / len(eval_loader)
-        # loss_pitch_noteg_avg = loss_pitch_noteg_avg / len(eval_loader)
+        loss_pitch_noteg_avg = loss_pitch_noteg_avg / len(eval_loader)
         loss_energy_avg = loss_energy_avg / len(eval_loader)
-        # loss_energy_notf0_avg = loss_energy_notf0_avg / len(eval_loader)
-        ctc_loss_avg = ctc_loss_avg / len(eval_loader)
+        loss_energy_notf0_avg = loss_energy_notf0_avg / len(eval_loader)
         loss_corr_avg = loss_corr_avg / len(eval_loader)
+        ctc_loss_avg = ctc_loss_avg / len(eval_loader)
+        style_loss_avg = style_loss_avg / len(eval_loader)
         loss_kl_avg = loss_kl_avg / len(eval_loader)
         loss_gen_all_avg = loss_gen_all_avg / len(eval_loader)
         loss_disc_all_avg = loss_disc_all_avg / len(eval_loader)
@@ -723,60 +759,82 @@ def evaluate(hps, generator, discriminator, eval_loader, writer_eval, epoch, log
         )
         logger.info(
             f"loss_mel={loss_mel_avg:.3f}, loss_kl={loss_kl_avg:.3f}, loss_dur={loss_dur_avg:.3f}, \
-            loss_pitch={loss_pitch_avg:.3f}, loss_energy={loss_energy_avg:.3f}, \
-            ctc_loss={ctc_loss_avg:.3f}, loss_corr={loss_corr_avg:.3f}"
-            # loss_pitch_noteg={loss_pitch_noteg_avg:.3f}, loss_energy_notf0={loss_energy_notf0_avg:.3f}, \
+            loss_pitch={loss_pitch_avg:.3f}, loss_energy={loss_energy_avg:.3f},  loss_corr={loss_corr_avg:.3f}\
+            ctc_loss={ctc_loss_avg:.3f}, style_loss={style_loss_avg:.3f} \
+            loss_pitch_noteg={loss_pitch_noteg_avg:.3f}, loss_energy_notf0={loss_energy_notf0_avg:.3f}"
         )
 
         scalar_dict = {
-            "loss/g/total": loss_gen_all_avg,
-            "loss/d/total": loss_disc_all_avg,
+            "loss_g_total": loss_gen_all_avg,
+            "loss_d_total": loss_disc_all_avg,
         }
         scalar_dict.update(
             {
+                "loss/g/gen": losses_gen_avg,
                 "loss/g/fm": loss_fm_avg,
                 "loss/g/mel": loss_mel_avg,
                 "loss/g/kl": loss_kl_avg,
                 "loss/g/dur": loss_dur_avg,
                 "loss/g/pitch": loss_pitch_avg,
-                # "loss/g/pitch_noteg": loss_pitch_noteg_avg,
+                "loss/g/pitch_noteg": loss_pitch_noteg_avg,
                 "loss/g/energy": loss_energy_avg,
-                # "loss/g/energy_notf0": loss_energy_notf0_avg,
+                "loss/g/energy_notf0": loss_energy_notf0_avg,
+                "loss/g/corr": loss_corr_avg,
                 "loss/g/ctc": ctc_loss_avg,
-                "loss/g/corr": loss_corr_avg
+                "loss/g/style": style_loss,
             }
         )
 
+        # scalar_dict.update(
+        #     {"loss/g/{}".format(i): v for i, v in enumerate(losses_gen_avg)}
+        # )
         scalar_dict.update(
-            {"loss/g/{}".format(i): v for i, v in enumerate(losses_gen_avg)}
-        )
-        scalar_dict.update(
-            {"loss/d_r/{}".format(i): v for i, v in enumerate(losses_disc_r_avg)}
-        )
-        scalar_dict.update(
-            {"loss/d_g/{}".format(i): v for i, v in enumerate(losses_disc_g_avg)}
+            {
+                "loss/d/d_r": losses_disc_r_avg,
+                "loss/d/d_g": losses_disc_g_avg,
+            }
         )
 
-    image_dict = {
-        f"gen/mel_{global_step}": utils.plot_spectrogram_to_numpy(
-            y_hat_mel[0].cpu().numpy()
-        )
-    }
-    audio_dict = {f"gen/audio_{global_step}": y_hat[0, :, : y_hat_lengths[0]]}
+        # scalar_dict.update(
+        #     {"loss/d_r/{}".format(i): v for i, v in enumerate(losses_disc_r_avg)}
+        # )
+        # scalar_dict.update(
+        #     {"loss/d_g/{}".format(i): v for i, v in enumerate(losses_disc_g_avg)}
+        # )
+
+    # audio_dict = {f"audio/gen_audio_{global_step}": y_hat[0, :, : y_hat_lengths[0]]}
+    audio_dict = {}
+    image_dict = {}
     if global_step == 0:
         image_dict.update(
-            {"gt/mel": utils.plot_spectrogram_to_numpy(y_mel[0].cpu().numpy())}
+            {"image/gt_mel": utils.plot_spectrogram_to_numpy(y_mel[0].cpu().numpy())}
         )
-        audio_dict.update({"gt/audio": wave[0, :, : wave_lengths[0]]})
+        image_dict = {
+            "image/gen_mel": utils.plot_spectrogram_to_numpy(
+                y_hat_mel[0].data.cpu().numpy()
+            )
+        }
+        # audio_dict= {"audio/gt_audio": y_hat[0, :, : y_hat_lengths[0]]}
+        # )        
+        # audio_dict.update({"audio/gt_audio": wave[0, :, : wave_lengths[0]]})
 
-    utils.summarize(
-        writer=writer_eval,
+    # utils.summarize(
+    #     writer=writer_eval,
+    #     global_step=global_step,
+    #     images=image_dict,
+    #     audios=audio_dict,
+    #     audio_sampling_rate=hps.data.sampling_rate,
+    #     scalars=scalar_dict,
+    # )
+
+    utils.wandb_log(
         global_step=global_step,
         images=image_dict,
         audios=audio_dict,
         audio_sampling_rate=hps.data.sampling_rate,
         scalars=scalar_dict,
-    )
+    )    
+
     generator.train()
 
 
